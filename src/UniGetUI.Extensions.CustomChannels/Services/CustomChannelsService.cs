@@ -39,16 +39,17 @@ public sealed class CustomChannelsService : IDisposable
         _logger = loggerFactory.CreateLogger<CustomChannelsService>();
         paths.EnsureCreated();
 
+        // 先加载配置，后续组件都依赖其中的下载/转存参数
+        var loaded = LoadConfig();
+        Config = loaded.Config;
+        ConfigPath = loaded.Path;
+        Warnings = loaded.Warnings;
+
         _secrets = new SecretStore(paths);
         _panSessions = new PanSessionStore(_secrets);
         _transfers = new TransferManager(paths, Config.Transfer, loggerFactory.CreateLogger<TransferManager>());
         _versionRecords = new VersionRecordStore(paths, loggerFactory.CreateLogger<VersionRecordStore>());
         _readmeStore = new ReadmeStore(paths);
-
-        var loaded = LoadConfig();
-        Config = loaded.Config;
-        ConfigPath = loaded.Path;
-        Warnings = loaded.Warnings;
 
         _http = UpdaterHttp.Create(Config.Download);
         _openList = new OpenListRuntime(
