@@ -29,6 +29,7 @@ internal sealed class CustomChannelsPage : UserControl
     private readonly SelectableTextBlock _notesText = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _readmeHeader = new() { FontSize = 13, FontWeight = FontWeight.SemiBold };
     private readonly SelectableTextBlock _readmeText = new() { TextWrapping = TextWrapping.Wrap, Opacity = 0.85 };
+    private readonly Border _readmeBox;
     private readonly Button _installButton;
     private readonly Button _editButton;
     private readonly Button _removeButton;
@@ -76,6 +77,8 @@ internal sealed class CustomChannelsPage : UserControl
                 await _viewModel.SetManualVersionAsync(card, value);
             }
         });
+
+        _readmeBox = Boxed(_readmeText);
 
         Content = BuildLayout();
         HookEvents();
@@ -155,7 +158,7 @@ internal sealed class CustomChannelsPage : UserControl
         _detailsPanel.Children.Add(_notesHeader);
         _detailsPanel.Children.Add(Boxed(_notesText));
         _detailsPanel.Children.Add(_readmeHeader);
-        _detailsPanel.Children.Add(Boxed(_readmeText));
+        _detailsPanel.Children.Add(_readmeBox);
         _detailsPanel.Children.Add(buttons);
 
         var root = new Grid
@@ -170,7 +173,7 @@ internal sealed class CustomChannelsPage : UserControl
         return root;
     }
 
-    private static Control Boxed(Control content) => new Border
+    private static Border Boxed(Control content) => new()
     {
         CornerRadius = new CornerRadius(6),
         Padding = new Thickness(8),
@@ -243,8 +246,13 @@ internal sealed class CustomChannelsPage : UserControl
             : $"{card.SourceBadges} · {card.InstallKindText}";
         _notesHeader.Text = _viewModel.SelectedVersionNotesTitle;
         _notesText.Text = _viewModel.SelectedCardNotes;
-        _readmeHeader.Text = _viewModel.SelectedVersion?.ReadmeTitle ?? "README";
-        _readmeText.Text = _viewModel.SelectedCardReadme;
+
+        string readme = _viewModel.SelectedCardReadme;
+        bool hasReadme = !string.IsNullOrWhiteSpace(readme);
+        _readmeHeader.Text = _viewModel.SelectedReadmeTitle;
+        _readmeHeader.IsVisible = hasReadme;
+        _readmeText.Text = readme;
+        _readmeBox.IsVisible = hasReadme;
 
         _installButton.IsEnabled = card is not null && _viewModel.SelectedVersion?.IsSelectable == true;
         _editButton.IsEnabled = card is not null;

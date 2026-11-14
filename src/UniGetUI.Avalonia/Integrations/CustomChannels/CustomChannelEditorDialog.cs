@@ -313,6 +313,40 @@ internal sealed class CustomChannelEditorDialog : Window
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { Length: > 0 } path)
         {
             _rootPath.Text = path;
+            AutoFillExecutable(path);
+        }
+    }
+
+    /// <summary>选定安装目录后，优先选择与标识/显示名称同名的 exe，否则取第一个 exe。</summary>
+    private void AutoFillExecutable(string root)
+    {
+        try
+        {
+            if (!Directory.Exists(root))
+            {
+                return;
+            }
+
+            var exes = Directory.EnumerateFiles(root, "*.exe", SearchOption.TopDirectoryOnly).ToList();
+            if (exes.Count == 0)
+            {
+                return;
+            }
+
+            string id = _id.Text?.Trim() ?? string.Empty;
+            string name = _displayName.Text?.Trim() ?? string.Empty;
+
+            string chosen = exes.FirstOrDefault(f => string.Equals(
+                                Path.GetFileNameWithoutExtension(f), id, StringComparison.OrdinalIgnoreCase))
+                            ?? exes.FirstOrDefault(f => string.Equals(
+                                Path.GetFileNameWithoutExtension(f), name, StringComparison.OrdinalIgnoreCase))
+                            ?? exes[0];
+
+            _exePath.Text = Path.GetFileName(chosen);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowError($"扫描目录失败：{ex.Message}");
         }
     }
 

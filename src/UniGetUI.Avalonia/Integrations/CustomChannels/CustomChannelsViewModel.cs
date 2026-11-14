@@ -84,6 +84,7 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         RebuildVersions();
         OnPropertyChanged(nameof(SelectedCardNotes));
         OnPropertyChanged(nameof(SelectedCardReadme));
+        OnPropertyChanged(nameof(SelectedReadmeTitle));
         OnPropertyChanged(nameof(HasSelectedCard));
     }
 
@@ -112,6 +113,7 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
     {
         OnPropertyChanged(nameof(SelectedCardNotes));
         OnPropertyChanged(nameof(SelectedCardReadme));
+        OnPropertyChanged(nameof(SelectedReadmeTitle));
         OnPropertyChanged(nameof(SelectedVersionNotesTitle));
     }
 
@@ -122,7 +124,14 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
     public string SelectedVersionNotesTitle =>
         SelectedVersion is null ? "更新说明" : $"{SelectedVersion.VersionText} 更新说明";
 
-    public string SelectedCardReadme => SelectedVersion?.ReadmeText ?? string.Empty;
+    /// <summary>README 只附加在最新版本上，选中历史版本时回退显示最新可用的 README。</summary>
+    public string SelectedCardReadme => SelectedVersion?.ReadmeText is { Length: > 0 } text
+        ? text
+        : Versions.FirstOrDefault(v => v.ReadmeText.Length > 0)?.ReadmeText ?? string.Empty;
+
+    public string SelectedReadmeTitle => SelectedVersion?.ReadmeText is { Length: > 0 }
+        ? SelectedVersion.ReadmeTitle
+        : Versions.FirstOrDefault(v => v.ReadmeText.Length > 0)?.ReadmeTitle ?? "README";
 
     /// <summary>页面首次加载时调用（只执行一次）。</summary>
     public void Initialize()
@@ -291,6 +300,46 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
 
         _service.Config.Targets.Add(created);
         PersistAndReload();
+
+        // 安装目录不存在时，添加完成后询问是否立即安装（先检查一次拿到可用版本）
+        var card = Cards.FirstOrDefault(c => c.Id == created.Id);
+        if (card is null || Directory.Exists(created.Install.RootPath))
+        {
+            return;
+        }
+
+        SelectedCard = card;
+        await CheckSingleAsync(card).ConfigureAwait(true);
+
+        var candidate = card.Candidates.FirstOrDefault(c => c.IsSelectable);
+        if (candidate is null)
+        {
+            _shell.Notify(
+                "暂时无法安装",
+                card.Error is { Length: > 0 } error
+                    ? $"检查未得到可安装的版本：{error}"
+                    : "渠道尚未返回可安装的版本，可稍后在卡片上点「检查」重试。",
+                isError: true);
+            return;
+        }
+
+        bool installNow = await ConfirmDialog.ShowAsync(
+            owner,
+            "安装目录不存在",
+            $"目录 {created.Install.RootPath} 不存在，是否现在安装 {card.DisplayName} " +
+            $"{candidate.Version.DisplayVersion}？",
+            "立即安装",
+            "稍后").ConfigureAwait(true);
+
+        if (!installNow)
+        {
+            return;
+        }
+
+        var selected = Versions.FirstOrDefault(v => ReferenceEquals(v.Candidate, candidate))
+                       ?? new CustomChannelVersionViewModel(candidate);
+        SelectedVersion = selected;
+        Install(card, selected);
     }
 
     public async Task EditTargetAsync(Window? owner, CustomChannelCardViewModel card)
