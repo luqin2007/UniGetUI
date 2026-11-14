@@ -7,7 +7,8 @@
         <RootNamespace>UniGetUI.Extensions.CustomChannels</RootNamespace>
         <AssemblyName>UniGetUI.Extensions.CustomChannels</AssemblyName>
         <IsAotCompatible>true</IsAotCompatible>
-        <NoWarn>$(NoWarn);CA1416</NoWarn>
+        <!-- JSON 全部走源生成；个别反射式重载在 AOT 裁剪下不可用，已在实现中回退 -->
+        <NoWarn>$(NoWarn);CA1416;IL2026;IL3050</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
