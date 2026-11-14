@@ -37,6 +37,9 @@ internal sealed class CustomChannelEditorDialog : Window
     private readonly TextBlock _error = new() { Foreground = Brushes.OrangeRed, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _detectStatus = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 };
     private readonly Func<TargetConfig, Task<TargetCheckResult>>? _checkAsync;
+    private Control? _exeField;
+    private Control? _targetFileField;
+    private Control? _silentField;
 
     private CustomChannelEditorDialog(
         TargetConfig target,
@@ -52,6 +55,7 @@ internal sealed class CustomChannelEditorDialog : Window
 
         _installKind.ItemsSource = Enum.GetValues<InstallKind>();
         _versionMode.ItemsSource = Enum.GetValues<LocalVersionMode>();
+        _installKind.SelectionChanged += (_, _) => UpdateFieldVisibility();
 
         _id.Text = target.Id;
         _id.Watermark = "唯一标识；留空时 GitHub/GitLab 渠道自动取仓库名";
@@ -80,6 +84,7 @@ internal sealed class CustomChannelEditorDialog : Window
         RebuildSourcePanel();
 
         Content = BuildLayout();
+        UpdateFieldVisibility();
         Opened += (_, _) => _id.Focus();
     }
 
@@ -112,6 +117,10 @@ internal sealed class CustomChannelEditorDialog : Window
         var cancel = new Button { Content = "取消", Padding = new Thickness(18, 6) };
         cancel.Click += (_, _) => Close(null);
 
+        _exeField = FieldWithBrowse("可执行文件", _exePath, BrowseExeAsync);
+        _targetFileField = Field("目标文件名（单文件模式）", _targetFileName);
+        _silentField = Field("静默参数（EXE）", _silentArgs);
+
         var body = new StackPanel
         {
             Margin = new Thickness(20),
@@ -127,9 +136,9 @@ internal sealed class CustomChannelEditorDialog : Window
                 Section("安装方式"),
                 Field("安装类型", _installKind),
                 FieldWithBrowse("安装目录", _rootPath, BrowseFolderAsync),
-                FieldWithBrowse("可执行文件", _exePath, BrowseExeAsync),
-                Field("目标文件名（单文件模式）", _targetFileName),
-                Field("静默参数（EXE）", _silentArgs),
+                _exeField,
+                _targetFileField,
+                _silentField,
                 _interactive,
                 _launchAfter,
                 _elevated,
@@ -150,6 +159,30 @@ internal sealed class CustomChannelEditorDialog : Window
         };
 
         return new ScrollViewer { Content = body };
+    }
+
+    /// <summary>按安装类型隐藏无意义的字段，减少误填。</summary>
+    private void UpdateFieldVisibility()
+    {
+        var kind = (InstallKind)(_installKind.SelectedItem ?? InstallKind.ZipOverwrite);
+
+        if (_exeField is not null)
+        {
+            // 只有解压覆盖与单文件模式需要知道主程序位置
+            _exeField.IsVisible = kind is InstallKind.ZipOverwrite or InstallKind.SingleFile;
+        }
+
+        if (_targetFileField is not null)
+        {
+            _targetFileField.IsVisible = kind == InstallKind.SingleFile;
+        }
+
+        if (_silentField is not null)
+        {
+            _silentField.IsVisible = kind == InstallKind.Exe;
+        }
+
+        _interactive.IsVisible = kind == InstallKind.Exe;
     }
 
     private void RebuildSourcePanel()
@@ -219,18 +252,25 @@ internal sealed class CustomChannelEditorDialog : Window
 
     private void ApplyDetection(SourceConfig source, VersionCandidate candidate, InstallDetection detection)
     {
-        string suggested = source.Type is SourceType.GithubRelease or SourceType.GitlabRelease
-            ? InstallDetector.ToSlug((source.Repo ?? source.ProjectId ?? string.Empty).Split('/')[^1])
-            : InstallDetector.ToSlug(InstallDetector.NameFromUrl(source.Url ?? source.ShareUrl ?? source.OpenListPath));
+        // 标识用小写 slug；显示名称保留原始大小写（例如 HybridFileXfer）
+        string rawName = source.Type is SourceType.GithubRelease or SourceType.GitlabRelease
+            ? (source.Repo ?? source.ProjectId ?? string.Empty).Trim().Split('/')[^1].Trim()
+            : InstallDetector.NameFromUrl(source.Url ?? source.ShareUrl ?? source.OpenListPath);
+        if (rawName.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            rawName = rawName[..^4];
+        }
+
+        string suggested = InstallDetector.ToSlug(rawName);
 
         if (string.IsNullOrWhiteSpace(_id.Text) && suggested.Length > 0)
         {
             _id.Text = suggested;
         }
 
-        if (string.IsNullOrWhiteSpace(_displayName.Text) && suggested.Length > 0)
+        if (string.IsNullOrWhiteSpace(_displayName.Text) && rawName.Length > 0)
         {
-            _displayName.Text = suggested;
+            _displayName.Text = rawName;
         }
 
         _installKind.SelectedItem = detection.Kind;
@@ -341,9 +381,9 @@ internal sealed class CustomChannelEditorDialog : Window
         if (row.SuggestId() is { Length: > 0 } suggested)
         {
             _id.Text = suggested;
-            if (string.IsNullOrWhiteSpace(_displayName.Text))
+            if (string.IsNullOrWhiteSpace(_displayName.Text) && row.SuggestName() is { Length: > 0 } display)
             {
-                _displayName.Text = suggested;
+                _displayName.Text = display;
             }
         }
     }
@@ -653,7 +693,10 @@ internal sealed class CustomChannelEditorDialog : Window
         }
 
         /// <summary>从仓库/项目地址推导标识：取最后一段并规范化为小写 slug。</summary>
-        public string? SuggestId()
+        public string? SuggestId() => InstallDetector.ToSlug(SuggestName()) is { Length: > 0 } slug ? slug : null;
+
+        /// <summary>从仓库/项目地址取显示名称：保留原始大小写（例如 HybridFileXfer）。</summary>
+        public string? SuggestName()
         {
             var type = (SourceType)(_type.SelectedItem ?? SourceType.GithubRelease);
             if (type is not (SourceType.GithubRelease or SourceType.GitlabRelease))
@@ -685,21 +728,7 @@ internal sealed class CustomChannelEditorDialog : Window
                 name = name[..^4];
             }
 
-            var slug = new System.Text.StringBuilder(name.Length);
-            foreach (char c in name.ToLowerInvariant())
-            {
-                if (char.IsLetterOrDigit(c) || c is '-' or '_' or '.')
-                {
-                    slug.Append(c);
-                }
-                else if (slug.Length > 0 && slug[^1] != '-')
-                {
-                    slug.Append('-');
-                }
-            }
-
-            string result = slug.ToString().Trim('-', '.', '_');
-            return result.Length == 0 ? null : result;
+            return name;
         }
 
         private static string? PrimaryValue(SourceConfig source) => source.Type switch

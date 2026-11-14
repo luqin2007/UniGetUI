@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -132,6 +133,11 @@ internal sealed class CustomChannelsPage : UserControl
         content.Children.Add(detailsPane);
 
         _versionsList.Height = 200;
+        _versionsList.ItemTemplate = new FuncDataTemplate<CustomChannelVersionViewModel>((vm, _) => new TextBlock
+        {
+            Text = $"{vm.VersionText}   {vm.RelationText}   {vm.PublishedText}",
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        }, supportsRecycling: true);
         _versionsList.SelectionChanged += (_, _) =>
             _viewModel.SelectedVersion = _versionsList.SelectedItem as CustomChannelVersionViewModel;
 
