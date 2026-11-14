@@ -169,12 +169,20 @@ jobs:
             updatedAt   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
           } | ConvertTo-Json
           $repo = "${{ github.repository }}"
-          $sha = gh api "repos/$repo/contents/sync-status.json?ref=sync-status" --jq .sha 2>$null
-          if (-not $sha) {
-            gh api -X POST "repos/$repo/git/refs" -f ref="refs/heads/sync-status" -f sha="$(git rev-parse HEAD)" | Out-Null
+          try {
             $sha = gh api "repos/$repo/contents/sync-status.json?ref=sync-status" --jq .sha 2>$null
+            if (-not $sha) {
+              gh api -X POST "repos/$repo/git/refs" -f ref="refs/heads/sync-status" -f sha="$(git rev-parse HEAD)" | Out-Null
+              for ($i = 0; $i -lt 5 -and -not $sha; $i++) {
+                Start-Sleep -Seconds 2
+                $sha = gh api "repos/$repo/contents/sync-status.json?ref=sync-status" --jq .sha 2>$null
+              }
+            }
+            $content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($status))
+            $args = @('-X','PUT',"repos/$repo/contents/sync-status.json",'-f',"message=chore: build failed",'-f',"content=$content",'-f','branch=sync-status')
+            if ($sha) { $args += @('-f', "sha=$sha") }
+            gh api @args | Out-Null
+          } catch {
+            Write-Warning "无法写入 sync-status：$_"
           }
-          $content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($status))
-          $args = @('-X','PUT',"repos/$repo/contents/sync-status.json",'-f',"message=chore: build failed",'-f',"content=$content",'-f','branch=sync-status')
-          if ($sha) { $args += @('-f', "sha=$sha") }
-          gh api @args | Out-Null
+          exit 0

@@ -39,10 +39,17 @@ public sealed class SampleConfigTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            var candidate = Path.Combine(directory.FullName, "config", "targets.sample.json");
-            if (File.Exists(candidate))
+            foreach (var relative in new[]
+                     {
+                         Path.Combine("config", "custom-channels", "targets.sample.json"),
+                         Path.Combine("config", "targets.sample.json"),
+                     })
             {
-                return candidate;
+                var candidate = Path.Combine(directory.FullName, relative);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
             }
 
             directory = directory.Parent;
