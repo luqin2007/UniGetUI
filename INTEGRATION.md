@@ -158,3 +158,47 @@ dotnet run   --project src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj
   下载与安装沿用自有实现（已支持断点续传、加密解压、原子替换与提权）。
 - 若上游把 Avalonia 版重新迁回 WinUI，需要重写 `Integrations/CustomChannels` 的 UI 层；
   核心库与 CI 不受影响。
+
+---
+
+## 10. 迭代总结与收尾（2026-11-14）
+
+### 10.1 本次改动
+
+| 项目 | 内容 |
+| --- | --- |
+| README 显示 | `SelectedCardReadme` 在选中历史版本时回退到「最新一个带 README 的版本」；新增 `SelectedReadmeTitle` 与之配套，标题与内容不再错位 |
+| README 空白 | `CustomChannelsPage` 在 README 为空时隐藏标题与内容框，不再出现空区块 |
+| 添加应用后的引导 | 安装根目录不存在时：自动选中新卡片 → 检查一次 → 取首个可安装候选 → 弹「立即安装 / 稍后」；确认后同步 `SelectedVersion` 再调用 `Install`，使界面选中状态与实际安装一致 |
+| 无候选版本 | 不再静默返回，改为 `_shell.Notify("暂时无法安装", ...)`，并带上渠道返回的错误信息 |
+| 构建修复 | `MarkdownPresenter` 中 `Avalonia.Controls.Primitives.ScrollBarVisibility` 被解析为 `UniGetUI.Avalonia.Controls...`，导致整个项目编译失败；改为 `using Avalonia.Controls.Primitives;` + 非限定名 |
+
+相关文件：`CustomChannelsViewModel.cs`、`CustomChannelsPage.cs`、`MarkdownPresenter.cs`（新增 `ConfirmDialog.cs`、`MarkdownPresenter.cs` 也在此次一并入库）。
+
+### 10.2 验证与发布
+
+- 本地：`dotnet build src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj` → 0 错误（仅历史警告）。
+- 提交：`af54232 fix(custom-channels): fall back to latest README, offer install right after adding an app`。
+- CI：`Build fork release`（run `43597129266`）成功，`Unit tests (custom channels)` 与 NativeAOT 发布均通过。
+- 发布：Release `v2026.3.4.11`（`Custom Channels 2026.3.4.11`），含安装包、便携 zip、`checksums.txt`、`productinfo.json`。
+
+### 10.3 仓库位置变更
+
+本仓库原先嵌套在旧的 AppUpdater 仓库里（`c:/Dev/projects/program_manager/UniGetUI`）。
+旧的 AppUpdater 项目（源码、测试、本地 Git 历史，无远端备份）已按要求删除，本仓库已迁出至：
+
+```text
+c:/Dev/projects/UniGetUI
+```
+
+迁移后状态：工作区干净，`HEAD = af54232`，`origin` 仍指向 `https://github.com/luqin2007/UniGetUI.git`。
+
+### 10.4 收尾清单
+
+- [ ] 把 IDE 工作区切换到 `c:/Dev/projects/UniGetUI`（当前仍指向已清空的 `program_manager`）。
+- [ ] 工作区切换后删除遗留空目录 `c:/Dev/projects/program_manager`：它被 IDE 占用，
+      `Remove-Item` 与回收站操作均被拒绝（`being used by another process`）。
+- [ ] 确认 `git status` 为空、`git log -1` 为 `af54232`，再按需重新构建。
+- [ ] 可选：把 `Integrations/CustomChannels/*.cs` 统一转为 UTF-8。这些文件当前是 UTF-16，
+      Git 视为二进制，`git diff --stat` 显示为 `Bin`，代码评审看不到行级差异。
+- [ ] 可选：`docs/` 中记录的自更新验证版本（`v2026.3.4.4`）已过期，如需可更新为 `v2026.3.4.11`。
