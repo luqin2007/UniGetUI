@@ -46,7 +46,7 @@ internal sealed class CustomChannelEditorDialog : Window
         _versionMode.ItemsSource = Enum.GetValues<LocalVersionMode>();
 
         _id.Text = target.Id;
-        _id.Watermark = "唯一标识，例如 vscode-portable";
+        _id.Watermark = "唯一标识；留空时 GitHub/GitLab 渠道自动取仓库名";
         _displayName.Text = target.DisplayName;
         _displayName.Watermark = "显示名称";
         _installKind.SelectedItem = target.Install.Kind;
@@ -116,6 +116,9 @@ internal sealed class CustomChannelEditorDialog : Window
             Spacing = 10,
             Children =
             {
+                Section("渠道"),
+                _sourcePanel,
+                addSource,
                 Section("基础信息"),
                 Field("标识", _id),
                 Field("显示名称", _displayName),
@@ -133,9 +136,6 @@ internal sealed class CustomChannelEditorDialog : Window
                 Field("版本文件路径（可选）", _versionPath),
                 _allowDowngrade,
                 Field("压缩包候选密码", _archivePasswords),
-                Section("渠道"),
-                _sourcePanel,
-                addSource,
                 _error,
                 new StackPanel
                 {
@@ -163,7 +163,41 @@ internal sealed class CustomChannelEditorDialog : Window
                 _rows.RemoveAt(index);
                 RebuildSourcePanel();
             };
+            row.PrimaryCommitted += OnSourcePrimaryCommitted;
             _sourcePanel.Children.Add(row.Build(remove));
+        }
+    }
+
+    /// <summary>标识留空时，从 GitHub/GitLab 渠道的仓库名推导一个可用标识。</summary>
+    private string? DeriveIdFromSources()
+    {
+        foreach (var row in _rows)
+        {
+            var suggested = row.SuggestId();
+            if (!string.IsNullOrWhiteSpace(suggested))
+            {
+                return suggested;
+            }
+        }
+
+        return null;
+    }
+
+    private void OnSourcePrimaryCommitted(object? sender, EventArgs e)
+    {
+        // 用户填完仓库地址、且尚未填写标识时，自动补上仓库名，省一次手动输入
+        if (!string.IsNullOrWhiteSpace(_id.Text) || sender is not SourceRow row)
+        {
+            return;
+        }
+
+        if (row.SuggestId() is { Length: > 0 } suggested)
+        {
+            _id.Text = suggested;
+            if (string.IsNullOrWhiteSpace(_displayName.Text))
+            {
+                _displayName.Text = suggested;
+            }
         }
     }
 
@@ -172,7 +206,16 @@ internal sealed class CustomChannelEditorDialog : Window
         string id = _id.Text?.Trim() ?? string.Empty;
         if (id.Length == 0)
         {
-            ShowError("请填写应用标识。");
+            id = DeriveIdFromSources() ?? string.Empty;
+            if (id.Length > 0)
+            {
+                _id.Text = id;
+            }
+        }
+
+        if (id.Length == 0)
+        {
+            ShowError("请填写应用标识（或先选择 GitHub/GitLab 仓库，标识会自动取仓库名）。");
             return;
         }
 
@@ -247,6 +290,9 @@ internal sealed class CustomChannelEditorDialog : Window
         private readonly TextBlock _patternLabel = new() { FontSize = 12, Opacity = 0.75 };
         private readonly SourceConfig _original;
 
+        /// <summary>仓库/项目输入框失焦时触发，供外层自动填充标识。</summary>
+        public event EventHandler? PrimaryCommitted;
+
         public SourceRow(SourceConfig source)
         {
             _original = source;
@@ -254,6 +300,7 @@ internal sealed class CustomChannelEditorDialog : Window
             _type.SelectedItem = source.Type;
             _prerelease.IsChecked = source.IncludePrerelease;
             _type.SelectionChanged += (_, _) => ApplyLabelsAndValues();
+            _primary.LostFocus += (_, _) => PrimaryCommitted?.Invoke(this, EventArgs.Empty);
 
             ApplyLabelsAndValues();
             _primary.Text = PrimaryValue(source);
@@ -423,6 +470,56 @@ internal sealed class CustomChannelEditorDialog : Window
             }
 
             _prerelease.IsVisible = type is SourceType.GithubRelease or SourceType.GitlabRelease;
+        }
+
+        /// <summary>从仓库/项目地址推导标识：取最后一段并规范化为小写 slug。</summary>
+        public string? SuggestId()
+        {
+            var type = (SourceType)(_type.SelectedItem ?? SourceType.GithubRelease);
+            if (type is not (SourceType.GithubRelease or SourceType.GitlabRelease))
+            {
+                return null;
+            }
+
+            string value = _primary.Text?.Trim() ?? string.Empty;
+            if (value.Length == 0)
+            {
+                return null;
+            }
+
+            // 支持直接粘贴完整地址：https://github.com/owner/repo(.git)
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            {
+                value = uri.AbsolutePath;
+            }
+
+            var segments = value.Trim('/', '\\').Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0)
+            {
+                return null;
+            }
+
+            string name = segments[^1];
+            if (name.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+            {
+                name = name[..^4];
+            }
+
+            var slug = new System.Text.StringBuilder(name.Length);
+            foreach (char c in name.ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(c) || c is '-' or '_' or '.')
+                {
+                    slug.Append(c);
+                }
+                else if (slug.Length > 0 && slug[^1] != '-')
+                {
+                    slug.Append('-');
+                }
+            }
+
+            string result = slug.ToString().Trim('-', '.', '_');
+            return result.Length == 0 ? null : result;
         }
 
         private static string? PrimaryValue(SourceConfig source) => source.Type switch
