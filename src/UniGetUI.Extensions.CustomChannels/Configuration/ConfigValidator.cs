@@ -35,9 +35,10 @@ public static class ConfigValidator
             ValidateOpenList(config, issues);
         }
 
+        // 空列表是合法状态（用户可能刚删掉最后一个应用）；仅提示，不阻断加载
         if (config.Targets.Count == 0)
         {
-            issues.Add(new ConfigIssue("targets", "尚未配置任何目标应用。", true));
+            issues.Add(new ConfigIssue("targets", "尚未配置任何目标应用。", false));
         }
 
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

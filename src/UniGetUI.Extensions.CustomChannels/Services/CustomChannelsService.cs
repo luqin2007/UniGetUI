@@ -31,6 +31,7 @@ public sealed class CustomChannelsService : IDisposable
     private UpdateSourceFactory _sourceFactory;
     private UpdateChecker _checker;
     private UpdateOrchestrator _orchestrator;
+    private string? _configPath;
 
     public CustomChannelsService(AppPaths paths, ILoggerFactory loggerFactory)
     {
@@ -43,6 +44,7 @@ public sealed class CustomChannelsService : IDisposable
         var loaded = LoadConfig();
         Config = loaded.Config;
         ConfigPath = loaded.Path;
+        _configPath = loaded.Path;
         Warnings = loaded.Warnings;
 
         _secrets = new SecretStore(paths);
@@ -82,16 +84,22 @@ public sealed class CustomChannelsService : IDisposable
     /// <summary>读取配置；缺失时生成示例配置，保证页面首次打开可用。</summary>
     private ConfigLoadResult LoadConfig()
     {
+        var path = _configPath ?? ConfigLoader.DefaultPath(Paths);
         try
         {
-            return ConfigLoader.LoadOrCreateSample(Paths);
+            // 已有配置文件时优先加载它（即使不是默认路径），避免保存与读取指向不同文件
+            return File.Exists(path) ? ConfigLoader.Load(path) : ConfigLoader.LoadOrCreateSample(Paths);
         }
         catch (ConfigException ex)
         {
+            // 关键：不要用示例配置覆盖用户数据。加载失败时退回空配置，
+            // 让界面显示错误提示，用户修复配置文件后重新加载即可。
             _logger.LogError(ex, "自定义渠道配置加载失败");
-            var fallback = ConfigLoader.CreateSampleConfig();
-            var path = ConfigLoader.DefaultPath(Paths);
-            return new ConfigLoadResult(fallback, path, [ex.Message], created: true);
+            return new ConfigLoadResult(
+                new UpdaterConfig(),
+                path,
+                [ex.Message],
+                created: false);
         }
     }
 
@@ -143,6 +151,7 @@ public sealed class CustomChannelsService : IDisposable
         var loaded = LoadConfig();
         Config = loaded.Config;
         ConfigPath = loaded.Path;
+        _configPath = loaded.Path;
         Warnings = loaded.Warnings;
 
         _http = UpdaterHttp.Create(Config.Download);

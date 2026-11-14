@@ -100,6 +100,22 @@ public sealed class ConfigLoaderTests : IDisposable
         result.Config.Targets.Should().NotBeEmpty();
     }
 
+    [Fact]
+    public void 删除最后一个目标后应能保存并重新加载为空列表()
+    {
+        var paths = new AppPaths(_root);
+        paths.EnsureCreated();
+        var sample = ConfigLoader.LoadOrCreateSample(paths);
+
+        sample.Config.Targets.Clear();
+        ConfigLoader.Save(sample.Path, sample.Config);
+
+        var reloaded = ConfigLoader.Load(sample.Path);
+
+        reloaded.Config.Targets.Should().BeEmpty();
+        reloaded.Warnings.Should().Contain(w => w.Contains("尚未配置任何目标应用"));
+    }
+
     public void Dispose()
     {
         try
