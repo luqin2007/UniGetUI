@@ -130,7 +130,26 @@ dotnet run   --project src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj
 
 ---
 
-## 7. 已知限制
+## 7. 已完成的端到端验证
+
+- 本地：核心库单测 110/110 通过；`UniGetUI.Avalonia` 编译 0 错误；启动应用后侧边栏出现「自定义渠道」，
+  页面可加载示例配置、发起检查、展示版本/说明/README 与安装按钮（已截图确认布局）。
+- CI（`custom-channels-build.yml`）：`dotnet publish ... Win-x64-NativeAot` 成功，安装包、便携 zip、
+  `checksums.txt`、`productinfo.json` 生成并发布为 Release `v2026.3.4.4`。
+- 自更新清单可访问：`https://github.com/luqin2007/UniGetUI/releases/latest/download/productinfo.json`
+  返回 `Version=2026.3.4.4` 与两个 Windows 资产（SHA256 与 Release 资产一致）。
+- 上游同步（`upstream-sync.yml`）：手动触发成功，识别到上游 `v2026.3.4` 已包含，写入
+  `sync-status` 分支的 `sync-status.json`（`merged: true`）。
+- 未自动验证：真实旧版本安装 → 自动更新安装（需要实际安装旧包并接受 SmartScreen 提示）；
+  合并冲突路径（Issue 创建/横幅提示）仅做代码审查，可在需要时用一次人为冲突触发验证。
+
+## 8. 仓库设置要点
+
+- fork 的**默认分支已改为 `custom`**：GitHub 只在默认分支上运行 `schedule` 与 `workflow_dispatch`，
+  因此定时同步与手动触发都要求 `custom` 为默认分支；`main` 保持上游镜像用途。
+- Actions 已启用，工作流令牌具备写权限（`contents/issues/actions: write`）。
+
+## 9. 已知限制
 
 - 网盘登录使用「系统浏览器 + 粘贴 Cookie」，不内置 WebView；Cookie 过期需重新登录。
 - 编辑器只覆盖常用字段（安装方式、路径、版本读取、密码、渠道），`PathMappings`、`TokenEnv`、
