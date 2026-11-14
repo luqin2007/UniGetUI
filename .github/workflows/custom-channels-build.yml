@@ -86,17 +86,28 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
+          if (Test-Path unigetui_bin) { Remove-Item unigetui_bin -Recurse -Force }
           dotnet publish src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj `
-            -c Release -p:PublishProfile=Win-x64-NativeAot -o unigetui_bin
+            -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 `
+            -p:PublishProfile=Win-x64-NativeAot -p:UseSharedCompilation=false -m:1 -o unigetui_bin
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not (Test-Path 'unigetui_bin/UniGetUI.exe')) { throw '未生成 unigetui_bin/UniGetUI.exe' }
 
       - name: Publish (fallback, self-contained)
         if: steps.publish_aot.outcome == 'failure'
         shell: pwsh
         run: |
           Write-Host "NativeAOT 发布失败，回退到自包含非 AOT 构建（功能一致，体积更大）。" -ForegroundColor Yellow
+          if (Test-Path unigetui_bin) { Remove-Item unigetui_bin -Recurse -Force }
           dotnet publish src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj `
-            -c Release -r win-x64 --self-contained true `
-            -p:PublishAot=false -p:PublishTrimmed=false -o unigetui_bin
+            -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 --self-contained true `
+            -p:PublishAot=false -p:PublishTrimmed=false -p:UseSharedCompilation=false -m:1 -o unigetui_bin
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not (Test-Path 'unigetui_bin/UniGetUI.exe')) { throw '未生成 unigetui_bin/UniGetUI.exe' }
+
+      - name: Refresh integrity tree
+        shell: pwsh
+        run: ./scripts/refresh-integrity-tree.ps1 -Path $PWD/unigetui_bin -FailOnUnexpectedFiles
 
       - name: Verify integration anchors
         shell: pwsh
@@ -122,6 +133,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           Compress-Archive -Path unigetui_bin/* -DestinationPath artifacts/UniGetUI.x64.zip -Force
+          # 便携版标记目录，自更新据此判断是否可以原地替换
+          Compress-Archive -Path InstallerExtras/ForceUniGetUIPortable -DestinationPath artifacts/UniGetUI.x64.zip -Update
 
       - name: Generate checksums and productinfo
         shell: pwsh
