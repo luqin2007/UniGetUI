@@ -124,11 +124,7 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         }
 
         _initialized = true;
-        if (_service.Warnings.Count > 0)
-        {
-            ConfigError = string.Join("；", _service.Warnings);
-        }
-
+        // 配置告警由 UniGetUI 顶部通知统一呈现，页面内不重复展示，避免占用工具栏空间
         SelectedCard = Cards.FirstOrDefault();
         _ = CheckAllAsync(forceRefresh: false);
         _ = CheckSyncStatusAsync();

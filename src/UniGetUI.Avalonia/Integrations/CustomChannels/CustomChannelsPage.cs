@@ -269,11 +269,28 @@ internal sealed class CustomChannelsPage : UserControl
     private sealed class CustomChannelCardControl : Button
     {
         private readonly CustomChannelCardViewModel _card;
-        private readonly TextBlock _name = new() { FontSize = 14, FontWeight = FontWeight.SemiBold };
-        private readonly TextBlock _version = new() { FontSize = 12 };
-        private readonly TextBlock _sources = new() { FontSize = 11, Opacity = 0.7 };
-        private readonly TextBlock _kind = new() { FontSize = 11, Opacity = 0.7 };
-        private readonly TextBlock _error = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = Brushes.OrangeRed };
+        private readonly TextBlock _name = new()
+        {
+            FontSize = 14,
+            FontWeight = FontWeight.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        private readonly TextBlock _version = new() { FontSize = 12, HorizontalAlignment = HorizontalAlignment.Right };
+        private readonly TextBlock _sources = new()
+        {
+            FontSize = 11,
+            Opacity = 0.7,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        private readonly TextBlock _kind = new() { FontSize = 11, Opacity = 0.7, HorizontalAlignment = HorizontalAlignment.Right };
+        private readonly TextBlock _error = new()
+        {
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            MaxLines = 3,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = Brushes.OrangeRed,
+        };
 
         public CustomChannelCardControl(CustomChannelCardViewModel card, CustomChannelsViewModel viewModel)
         {
