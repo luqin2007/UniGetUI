@@ -135,7 +135,7 @@ dotnet run   --project src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj
 - 本地：核心库单测 110/110 通过；`UniGetUI.Avalonia` 编译 0 错误；启动应用后侧边栏出现「自定义渠道」，
   页面可加载示例配置、发起检查、展示版本/说明/README 与安装按钮（已截图确认布局）。
 - CI（`custom-channels-build.yml`）：`dotnet publish ... Win-x64-NativeAot` 成功，安装包、便携 zip、
-  `checksums.txt`、`productinfo.json` 生成并发布为 Release `v2026.3.4.4`。
+  `checksums.txt`、`productinfo.json` 生成并发布为 Release `v2026.3.4.4`（当前最新为 `v2026.3.4.11`，见第 10.2 节）。
 - 自更新清单可访问：`https://github.com/luqin2007/UniGetUI/releases/latest/download/productinfo.json`
   返回 `Version=2026.3.4.4` 与两个 Windows 资产（SHA256 与 Release 资产一致）。
 - 上游同步（`upstream-sync.yml`）：手动触发成功，识别到上游 `v2026.3.4` 已包含，写入
@@ -195,10 +195,10 @@ c:/Dev/projects/UniGetUI
 
 ### 10.4 收尾清单
 
-- [ ] 把 IDE 工作区切换到 `c:/Dev/projects/UniGetUI`（当前仍指向已清空的 `program_manager`）。
-- [ ] 工作区切换后删除遗留空目录 `c:/Dev/projects/program_manager`：它被 IDE 占用，
-      `Remove-Item` 与回收站操作均被拒绝（`being used by another process`）。
-- [ ] 确认 `git status` 为空、`git log -1` 为 `af54232`，再按需重新构建。
-- [ ] 可选：把 `Integrations/CustomChannels/*.cs` 统一转为 UTF-8。这些文件当前是 UTF-16，
-      Git 视为二进制，`git diff --stat` 显示为 `Bin`，代码评审看不到行级差异。
-- [ ] 可选：`docs/` 中记录的自更新验证版本（`v2026.3.4.4`）已过期，如需可更新为 `v2026.3.4.11`。
+- [x] 把 IDE 工作区切换到 `c:/Dev/projects/UniGetUI`（2026-11-14 完成）。
+- [x] 工作区切换后删除遗留空目录 `c:/Dev/projects/program_manager`（IDE 占用随切换解除，已删除）。
+- [x] 确认 `git status` 为空；`HEAD` 已推进到 `e8d4793`（记录本次收尾的文档提交）。
+- [x] UTF-8 问题：文件本身早已是 UTF-8（无 BOM、无 `0x00` 字节），`Bin` 的根因是本地
+      `.git/info/attributes` 中的 `* -text -diff` 规则；已备份为 `.git/info/attributes.bak-migration`
+      并移除该规则，`git diff` 恢复行级文本输出（无需改动任何 .cs 文件）。
+- [x] 第 7 节的自更新验证版本仍写 `v2026.3.4.4`，已加注指向第 10.2 节的 `v2026.3.4.11`。
