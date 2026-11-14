@@ -143,6 +143,7 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
 
         _initialized = true;
         // 配置告警由 UniGetUI 顶部通知统一呈现，页面内不重复展示，避免占用工具栏空间
+        ConfigError = _service.LastLoadError;
         SelectedCard = Cards.FirstOrDefault();
         _ = CheckAllAsync(forceRefresh: false);
         _ = CheckSyncStatusAsync();
@@ -392,7 +393,7 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         try
         {
             _service.SaveConfig();
-            ConfigError = null;
+            ConfigError = _service.LastLoadError;
         }
         catch (Exception ex)
         {

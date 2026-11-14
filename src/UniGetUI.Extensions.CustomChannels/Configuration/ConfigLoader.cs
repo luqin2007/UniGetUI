@@ -5,7 +5,12 @@ namespace UniGetUI.Extensions.CustomChannels.Configuration;
 
 public sealed class ConfigException(string message, Exception? inner = null) : Exception(message, inner);
 
-public sealed class ConfigLoadResult(UpdaterConfig config, string path, List<string> warnings, bool created)
+public sealed class ConfigLoadResult(
+    UpdaterConfig config,
+    string path,
+    List<string> warnings,
+    bool created,
+    bool loadFailed = false)
 {
     public UpdaterConfig Config { get; } = config;
 
@@ -14,6 +19,9 @@ public sealed class ConfigLoadResult(UpdaterConfig config, string path, List<str
     public List<string> Warnings { get; } = warnings;
 
     public bool CreatedFromSample { get; } = created;
+
+    /// <summary>配置加载/校验失败时为 true，此时 Config 只是占位的空配置，不应覆盖已有状态。</summary>
+    public bool LoadFailed { get; } = loadFailed;
 }
 
 public static class ConfigLoader

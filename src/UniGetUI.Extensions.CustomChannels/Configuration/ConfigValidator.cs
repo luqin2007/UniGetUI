@@ -192,7 +192,12 @@ public static class ConfigValidator
         var path = version.Path ?? target.Install.ExePath;
         if (string.IsNullOrWhiteSpace(path))
         {
-            issues.Add(new ConfigIssue($"{prefix}.version.path", "读取本地版本需要指定文件路径。", true));
+            // 降级为警告：VersionResolver 对缺失路径会记录日志并回退到手动填写的版本记录，
+            // 不应让整个配置文件无法加载（曾导致添加应用后界面清空）。
+            issues.Add(new ConfigIssue(
+                $"{prefix}.version.path",
+                "未指定版本文件路径，无法自动读取本地版本（可在应用卡片手动填写版本）。",
+                false));
         }
 
         if (!string.IsNullOrWhiteSpace(version.Pattern) && !IsValidRegex(version.Pattern))

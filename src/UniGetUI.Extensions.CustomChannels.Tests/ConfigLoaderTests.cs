@@ -1,5 +1,7 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using UniGetUI.Extensions.CustomChannels.Configuration;
 using UniGetUI.Extensions.CustomChannels.Infrastructure;
+using UniGetUI.Extensions.CustomChannels.Services;
 using FluentAssertions;
 
 namespace UniGetUI.Extensions.CustomChannels.Tests;
@@ -114,6 +116,58 @@ public sealed class ConfigLoaderTests : IDisposable
 
         reloaded.Config.Targets.Should().BeEmpty();
         reloaded.Warnings.Should().Contain(w => w.Contains("尚未配置任何目标应用"));
+    }
+
+    [Fact]
+    public void 文件版本模式缺少路径应仅警告并正常加载()
+    {
+        var path = Path.Combine(_root, "targets.json");
+        File.WriteAllText(path, """
+        {
+          "targets": [
+            {
+              "id": "demo",
+              "displayName": "Demo",
+              "install": { "kind": "zipOverwrite", "rootPath": "C:\\Apps\\Demo" },
+              "version": { "mode": "fileVersion" },
+              "sources": [ { "type": "githubRelease", "repo": "owner/demo" } ]
+            }
+          ]
+        }
+        """);
+
+        var result = ConfigLoader.Load(path);
+
+        result.Config.Targets.Should().HaveCount(1);
+        result.Warnings.Should().Contain(w => w.Contains("version.path"));
+    }
+
+    [Fact]
+    public void 保存校验未通过时应拒绝写入()
+    {
+        var paths = new AppPaths(_root);
+        var service = new CustomChannelsService(paths, NullLoggerFactory.Instance);
+        service.Config.Targets.Clear();
+        service.Config.Targets.Add(new TargetConfig { Id = "", DisplayName = "bad" });
+
+        var act = () => service.SaveConfig();
+
+        act.Should().Throw<ConfigException>().WithMessage("*校验未通过*");
+        File.ReadAllText(ConfigLoader.DefaultPath(paths)).Should().NotContain("bad");
+    }
+
+    [Fact]
+    public void 配置文件损坏时重载应保留当前配置()
+    {
+        var paths = new AppPaths(_root);
+        var service = new CustomChannelsService(paths, NullLoggerFactory.Instance);
+        var before = service.Config.Targets.Select(t => t.Id).ToList();
+
+        File.WriteAllText(ConfigLoader.DefaultPath(paths), "{ this is not json");
+        service.Reload();
+
+        service.Config.Targets.Select(t => t.Id).Should().Equal(before);
+        service.LastLoadError.Should().NotBeNull();
     }
 
     public void Dispose()

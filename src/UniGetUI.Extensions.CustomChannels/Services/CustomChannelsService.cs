@@ -71,6 +71,9 @@ public sealed class CustomChannelsService : IDisposable
 
     public IReadOnlyList<string> Warnings { get; private set; }
 
+    /// <summary>最近一次配置加载失败的原因；加载成功后为 null。界面据此提示用户。</summary>
+    public string? LastLoadError { get; private set; }
+
     public PanSessionStore PanSessions => _panSessions;
 
     public TransferManager Transfers => _transfers;
@@ -88,18 +91,22 @@ public sealed class CustomChannelsService : IDisposable
         try
         {
             // 已有配置文件时优先加载它（即使不是默认路径），避免保存与读取指向不同文件
-            return File.Exists(path) ? ConfigLoader.Load(path) : ConfigLoader.LoadOrCreateSample(Paths);
+            var result = File.Exists(path) ? ConfigLoader.Load(path) : ConfigLoader.LoadOrCreateSample(Paths);
+            LastLoadError = null;
+            return result;
         }
         catch (ConfigException ex)
         {
-            // 关键：不要用示例配置覆盖用户数据。加载失败时退回空配置，
-            // 让界面显示错误提示，用户修复配置文件后重新加载即可。
+            // 关键：不要用示例配置覆盖用户数据。加载失败时退回空配置并标记失败，
+            // 让 Reload 保留旧配置（否则界面会清空，且后续保存会用空配置覆盖磁盘）。
             _logger.LogError(ex, "自定义渠道配置加载失败");
+            LastLoadError = ex.Message;
             return new ConfigLoadResult(
                 new UpdaterConfig(),
                 path,
                 [ex.Message],
-                created: false);
+                created: false,
+                loadFailed: true);
         }
     }
 
@@ -147,8 +154,18 @@ public sealed class CustomChannelsService : IDisposable
     /// <summary>重新读取配置文件并重建运行期管线。</summary>
     public void Reload()
     {
-        var previousHttp = _http;
         var loaded = LoadConfig();
+        if (loaded.LoadFailed)
+        {
+            // 加载失败时保留当前配置与管线，避免界面清空、
+            // 以及后续任何保存把占位的空配置写回磁盘造成数据丢失。
+            Warnings = loaded.Warnings;
+            _cache.Invalidate();
+            _openList.Invalidate();
+            return;
+        }
+
+        var previousHttp = _http;
         Config = loaded.Config;
         ConfigPath = loaded.Path;
         _configPath = loaded.Path;
@@ -164,6 +181,14 @@ public sealed class CustomChannelsService : IDisposable
     /// <summary>把内存中的配置写回磁盘（界面编辑后调用）。</summary>
     public void SaveConfig()
     {
+        // 保存前先校验：写入一个自己都加载不了的配置文件，会让下一次加载失败
+        var errors = ConfigValidator.Validate(Config).Where(i => i.IsError).ToList();
+        if (errors.Count > 0)
+        {
+            throw new ConfigException(
+                "配置校验未通过，未保存：\r\n" + string.Join("\r\n", errors.Select(e => " - " + e)));
+        }
+
         ConfigLoader.Save(ConfigPath, Config);
         Reload();
     }
