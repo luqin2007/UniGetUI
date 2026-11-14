@@ -100,3 +100,8 @@ src/UniGetUI.v3.ncrunchsolution
 # macOS Finder metadata
 .DS_Store
 /src/UniGetUI.Avalonia/Generated Files
+
+# [CustomChannels] fork 本地构建产物
+UniGetUI.fork.iss
+unigetui_bin/
+artifacts/

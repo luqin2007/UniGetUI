@@ -1,0 +1,149 @@
+// 自定义渠道示例配置（JSONC，允许注释与尾随逗号）。
+// 首次打开「自定义渠道」页面时，若 %LOCALAPPDATA%\UniGetUI\custom-channels\settings.json 不存在，
+// 会自动生成一份最小配置；以下内容展示了所有受支持的渠道与安装方式，可复制到 settings.json。
+{
+  "download": {
+    "concurrency": 4,
+    "maxSpeedKBps": 0,
+    "keepBackupCount": 1,
+    "proxy": null,
+    "releaseCacheMinutes": 5,
+    "timeoutSeconds": 100
+  },
+  "transfer": {
+    "enabled": true,
+    "transferPath": "/UniGetUI",
+    "cleanupPolicy": "DeleteAfterSuccess"
+  },
+  "openList": {
+    "mode": "Disabled",
+    "baseUrl": "http://127.0.0.1:5244",
+    "username": "admin",
+    "password": null,
+    "token": null,
+    "localPort": 5244,
+    "rootPath": "/",
+    "autoDownloadBinary": true,
+    "binaryPath": null
+  },
+  "targets": [
+    {
+      // GitHub Release + zip 解压覆盖
+      "id": "vscode-portable",
+      "displayName": "VS Code 便携版",
+      "install": {
+        "kind": "ZipOverwrite",
+        "rootPath": "C:\\Apps\\VSCode",
+        "exePath": "Code.exe",
+        "launchAfterUpdate": false,
+        "requiresElevation": false
+      },
+      "version": { "mode": "FileVersion", "path": "Code.exe" },
+      "archive": { "passwords": [], "promptForPassword": true },
+      "policy": { "allowDowngrade": false },
+      "sources": [
+        {
+          "type": "GithubRelease",
+          "repo": "microsoft/vscode",
+          "assetPattern": "*-win32-x64.zip",
+          "includePrerelease": false
+        }
+      ]
+    },
+    {
+      // GitLab（可自建实例）+ 单文件替换
+      "id": "gitlab-cli",
+      "displayName": "GitLab CLI",
+      "install": {
+        "kind": "SingleFile",
+        "rootPath": "C:\\Tools\\glab",
+        "targetFileName": "glab.exe",
+        "launchAfterUpdate": false
+      },
+      "version": { "mode": "Command", "command": "glab --version" },
+      "sources": [
+        {
+          "type": "GitlabRelease",
+          "baseUrl": "https://gitlab.com",
+          "projectId": "gitlab-org/cli",
+          "assetPattern": "*windows_amd64*"
+        }
+      ]
+    },
+    {
+      // 百度网盘分享 + 加密 zip（会依次尝试密码，失败后弹窗询问）
+      "id": "baidu-archive",
+      "displayName": "百度网盘应用",
+      "install": {
+        "kind": "ZipOverwrite",
+        "rootPath": "C:\\Apps\\BaiduApp",
+        "exePath": "App.exe"
+      },
+      "version": { "mode": "Recorded" },
+      "archive": { "passwords": ["example-password"], "promptForPassword": true },
+      "sources": [
+        {
+          "type": "BaiduPan",
+          "shareUrl": "https://pan.baidu.com/s/xxxxxx",
+          "pwd": "abcd",
+          "pathPattern": "/latest/App-*.zip"
+        }
+      ]
+    },
+    {
+      // 夸克网盘分享
+      "id": "quark-app",
+      "displayName": "夸克网盘应用",
+      "install": {
+        "kind": "Exe",
+        "rootPath": "C:\\Apps\\QuarkApp",
+        "silentArgs": "/S",
+        "interactive": false
+      },
+      "version": { "mode": "FileVersion", "path": "App.exe" },
+      "sources": [
+        {
+          "type": "QuarkPan",
+          "shareUrl": "https://pan.quark.cn/s/xxxxxx",
+          "pathPattern": "/releases/App-Setup-*.exe"
+        }
+      ]
+    },
+    {
+      // OpenList 目录（外部实例或本机托管）
+      "id": "openlist-app",
+      "displayName": "OpenList 应用",
+      "install": {
+        "kind": "Msi",
+        "rootPath": "C:\\Program Files\\OpenListApp"
+      },
+      "version": { "mode": "Recorded" },
+      "sources": [
+        {
+          "type": "OpenList",
+          "openListPath": "/quark/releases",
+          "filePattern": "App-*.msi"
+        }
+      ]
+    },
+    {
+      // HTTPS 直链（可选 SHA256 校验）
+      "id": "direct-app",
+      "displayName": "直链应用",
+      "install": {
+        "kind": "Exe",
+        "rootPath": "C:\\Apps\\DirectApp",
+        "silentArgs": "/S"
+      },
+      "version": { "mode": "Recorded" },
+      "sources": [
+        {
+          "type": "DirectUrl",
+          "url": "https://example.com/app/App-Setup.exe",
+          "version": "1.2.3",
+          "sha256": null
+        }
+      ]
+    }
+  ]
+}

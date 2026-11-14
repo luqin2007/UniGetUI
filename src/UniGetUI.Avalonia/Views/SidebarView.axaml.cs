@@ -453,6 +453,7 @@ public partial class SidebarView : BaseView<SidebarViewModel>
         PageType.Updates => UpdatesNavBtn,
         PageType.Installed => InstalledNavBtn,
         PageType.Bundles => BundlesNavBtn,
+        PageType.CustomChannels => CustomChannelsNavBtn, // [CustomChannels]
         PageType.GitRepositories => GitRepositoriesNavBtn,
         PageType.AgentSkills => AgentSkillsNavBtn,
 #if UNIGETUI_XCODE_EXTENSION
@@ -568,6 +569,7 @@ public partial class SidebarView : BaseView<SidebarViewModel>
             PageType.Installed => InstalledNavBtn,
             PageType.Bundles => BundlesNavBtn,
             PageType.Catalog => CatalogNavBtn,
+            PageType.CustomChannels => CustomChannelsNavBtn, // [CustomChannels]
             PageType.GitRepositories => GitRepositoriesNavBtn,
             PageType.AgentSkills => AgentSkillsNavBtn,
 #if UNIGETUI_XCODE_EXTENSION

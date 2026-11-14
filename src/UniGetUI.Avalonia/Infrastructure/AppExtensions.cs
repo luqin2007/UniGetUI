@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using UniGetUI.Avalonia.Integrations.CustomChannels;
 using UniGetUI.Avalonia.Views;
 using UniGetUI.Avalonia.Views.Pages.SettingsPages;
 using UniGetUI.Core.Logging;
@@ -103,6 +104,29 @@ internal static class AppExtensions
                 },
     };
 
+    // [CustomChannels] 自定义渠道：GitHub/GitLab Release、OpenList、百度/夸克网盘、直链
+    public static readonly AppExtension CustomChannelsExtension = new()
+    {
+        Id = "custom-channels",
+        Name = "Custom Channels",
+        Description = "Track apps published on GitHub/GitLab releases, OpenList, Baidu Pan, Quark Pan or direct links",
+        Icon = IconType.CustomChannels,
+        EnabledSetting = Settings.K.EnableCustomChannels,
+        Page = PageType.CustomChannels,
+        SettingsPage = typeof(CustomChannelsSettingsPage),
+        CreateSettingsPage = () => new CustomChannelsSettingsPage(),
+        Start = window => CustomChannelsIntegration.Start(window),
+        Status = () => CustomChannelsIntegration.Status(),
+        // 新用户首次启动时默认打开（用户手动关闭后不再覆盖）
+        InitializePreferences = () =>
+        {
+            if (string.IsNullOrEmpty(Settings.GetValue(Settings.K.EnableCustomChannels)))
+            {
+                Settings.Set(Settings.K.EnableCustomChannels, true);
+            }
+        },
+    };
+
     public static readonly AppExtension AgentSkills = new()
     {
         Id = "agent-skills",
@@ -152,9 +176,11 @@ internal static class AppExtensions
     /// <summary>Every extension available on this system, in the order Settings lists them.</summary>
     public static IReadOnlyList<AppExtension> All { get; } =
 #if UNIGETUI_XCODE_EXTENSION
-        OperatingSystem.IsMacOS() ? [GitRepositories, AgentSkills, Xcode] : [GitRepositories, AgentSkills];
+        OperatingSystem.IsMacOS()
+            ? [CustomChannelsExtension, GitRepositories, AgentSkills, Xcode]
+            : [CustomChannelsExtension, GitRepositories, AgentSkills];
 #else
-        [GitRepositories, AgentSkills];
+        [CustomChannelsExtension, GitRepositories, AgentSkills];
 #endif
 
     public static void InitializePreferences()

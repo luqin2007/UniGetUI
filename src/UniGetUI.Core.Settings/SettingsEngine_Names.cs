@@ -108,6 +108,8 @@ public static partial class Settings
         EnableCatalogEditor,
         EnableGitRepositories,
         EnableAgentSkills,
+        // [CustomChannels] 自定义渠道扩展开关
+        EnableCustomChannels,
         GitRepositories,
         GitRepositoryBranches,
         GitRepositoriesCheckInterval,
@@ -297,6 +299,8 @@ public static partial class Settings
             K.EnableCatalogEditor => "EnableCatalogEditor",
             K.EnableGitRepositories => "EnableGitRepositories",
             K.EnableAgentSkills => "EnableAgentSkills",
+            // [CustomChannels] 自定义渠道扩展开关
+            K.EnableCustomChannels => "EnableCustomChannels",
             K.GitRepositories => "GitRepositories",
             K.GitRepositoryBranches => "GitRepositoryBranches",
             K.GitRepositoriesCheckInterval => "GitRepositoriesCheckInterval",

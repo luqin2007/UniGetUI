@@ -95,6 +95,8 @@ namespace UniGetUI.Interface.Enums
         Extensions = '\uE94B',
         Skills = '\uE94C',
         Xcode = '\uE94D',
+        // [CustomChannels] 自定义渠道扩展图标（映射到 Assets/Symbols/Sources.svg）
+        CustomChannels = '\uE94E',
     }
 
     public class NotificationArguments

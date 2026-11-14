@@ -1,0 +1,180 @@
+name: Build fork release
+
+# 编译 fork 发行版并发布 Release（Windows x64）：
+#   * 版本号 = 上游最新正式版 + 构建号（4 段，保证高于上游与上次发布）；
+#   * 先尝试 NativeAOT（与上游一致），失败自动回退到自包含非 AOT 构建；
+#   * 产物包含安装包、便携 zip、checksums 与 productinfo.json（自更新清单）。
+
+on:
+  push:
+    branches: [custom]
+    paths:
+      - 'src/**'
+      - 'scripts/custom-channels/**'
+      - '.github/workflows/custom-channels-build.yml'
+      - 'UniGetUI.iss'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '可选：显式版本号（例如 2026.3.4.2），留空则自动计算'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-build
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  FORK_BRANCH: custom
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout custom
+        uses: actions/checkout@v4
+        with:
+          ref: custom
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Compute version
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ github.event.inputs.version }}"
+          if (-not $version) {
+            $tag = $null
+            try {
+              $tag = gh api repos/Devolutions/UniGetUI/releases/latest --jq .tag_name 2>$null
+            } catch {
+              Write-Host "无法读取上游版本，使用回退版本号。"
+            }
+            if ($tag) {
+              $base = $tag.TrimStart('v')
+            } else {
+              $base = '1.0.0'
+            }
+            $version = "$base.${{ github.run_number }}"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "发布版本：$version"
+
+      - name: Stamp version
+        shell: pwsh
+        run: ./scripts/set-version.ps1 -Version "${{ steps.version.outputs.version }}"
+
+      - name: Restore
+        run: dotnet restore src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj
+
+      - name: Unit tests (custom channels)
+        run: dotnet test src/UniGetUI.Extensions.CustomChannels.Tests/UniGetUI.Extensions.CustomChannels.Tests.csproj --nologo -v q
+
+      - name: Publish (NativeAOT)
+        id: publish_aot
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          dotnet publish src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj `
+            -c Release -p:PublishProfile=Win-x64-NativeAot -o unigetui_bin
+
+      - name: Publish (fallback, self-contained)
+        if: steps.publish_aot.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Write-Host "NativeAOT 发布失败，回退到自包含非 AOT 构建（功能一致，体积更大）。" -ForegroundColor Yellow
+          dotnet publish src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishAot=false -p:PublishTrimmed=false -o unigetui_bin
+
+      - name: Verify integration anchors
+        shell: pwsh
+        run: ./scripts/custom-channels/verify-integration.ps1
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Build installer
+        id: installer
+        shell: pwsh
+        run: |
+          $path = ./scripts/custom-channels/make-installer.ps1 `
+            -Version "${{ steps.version.outputs.version }}" `
+            -OutputDir 'artifacts'
+          "installer=$path" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Compress-Archive -Path unigetui_bin/* -DestinationPath artifacts/UniGetUI.x64.zip -Force
+
+      - name: Generate checksums and productinfo
+        shell: pwsh
+        run: |
+          $installer = 'artifacts/UniGetUI.Installer.x64.exe'
+          $zip = 'artifacts/UniGetUI.x64.zip'
+          ./scripts/custom-channels/make-productinfo.ps1 `
+            -Version "${{ steps.version.outputs.version }}" `
+            -InstallerPath $installer -ZipPath $zip `
+            -Owner "${{ github.repository_owner }}" -Repository "${{ github.event.repository.name }}" `
+            -OutputPath artifacts/productinfo.json
+          @(
+            "$((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant())  UniGetUI.Installer.x64.exe"
+            "$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant())  UniGetUI.x64.zip"
+          ) | Set-Content artifacts/checksums.txt
+          Get-ChildItem artifacts | Select-Object Name, Length
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v${{ steps.version.outputs.version }}"
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          gh release create $tag `
+            artifacts/UniGetUI.Installer.x64.exe `
+            artifacts/UniGetUI.x64.zip `
+            artifacts/productinfo.json `
+            artifacts/checksums.txt `
+            --title "Custom Channels ${{ steps.version.outputs.version }}" `
+            --generate-notes `
+            --target custom
+
+      - name: Report build failure
+        if: failure()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $status = @{
+            upstreamTag = "${{ steps.version.outputs.version }}"
+            merged      = $false
+            conflicts   = ''
+            issueUrl    = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            updatedAt   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          } | ConvertTo-Json
+          $repo = "${{ github.repository }}"
+          $sha = gh api "repos/$repo/contents/sync-status.json?ref=sync-status" --jq .sha 2>$null
+          if (-not $sha) {
+            gh api -X POST "repos/$repo/git/refs" -f ref="refs/heads/sync-status" -f sha="$(git rev-parse HEAD)" | Out-Null
+            $sha = gh api "repos/$repo/contents/sync-status.json?ref=sync-status" --jq .sha 2>$null
+          }
+          $content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($status))
+          $args = @('-X','PUT',"repos/$repo/contents/sync-status.json",'-f',"message=chore: build failed",'-f',"content=$content",'-f','branch=sync-status')
+          if ($sha) { $args += @('-f', "sha=$sha") }
+          gh api @args | Out-Null

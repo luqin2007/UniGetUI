@@ -126,6 +126,15 @@
       <Platform Solution="*|arm64" Project="arm64" />
       <Platform Solution="*|x64" Project="x64" />
     </Project>
+    <!-- [CustomChannels] 自定义渠道 -->
+    <Project Path="UniGetUI.Extensions.CustomChannels/UniGetUI.Extensions.CustomChannels.csproj">
+      <Platform Solution="*|arm64" Project="arm64" />
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
+    <Project Path="UniGetUI.Extensions.CustomChannels.Tests/UniGetUI.Extensions.CustomChannels.Tests.csproj">
+      <Platform Solution="*|arm64" Project="arm64" />
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
   </Folder>
   <Folder Name="/UniGetUI.Interface.Enums/">
     <Project Path="UniGetUI.Interface.Enums/UniGetUI.Interface.Enums.csproj">

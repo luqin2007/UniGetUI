@@ -31,8 +31,14 @@ internal static partial class AvaloniaAutoUpdater
 
     // ------------------------------------------------------------------ constants
     private const string REGISTRY_PATH = @"Software\Devolutions\UniGetUI";
-    private const string DEFAULT_PRODUCTINFO_URL = "https://devolutions.net/productinfo.json";
+    // [CustomChannels] fork 发行版：清单由本仓库的 latest Release 提供（主机 github.com 在上游白名单内）
+    private const string DEFAULT_PRODUCTINFO_URL =
+        "https://github.com/luqin2007/UniGetUI/releases/latest/download/productinfo.json";
     private const string DEFAULT_PRODUCTINFO_KEY = "Devolutions.UniGetUI";
+
+    // [CustomChannels] fork 无法使用 Devolutions 的 Authenticode 证书：安装包 SHA256 仍强制校验，
+    // 但签名不受信时放行（否则自动更新永远失败）。合并上游时请保留该常量与下面的分支。
+    private const bool FORK_ALLOW_UNSIGNED_INSTALLERS = true;
 
     private const string REG_PRODUCTINFO_URL = "UpdaterProductInfoUrl";
     private const string REG_PRODUCTINFO_KEY = "UpdaterProductKey";
@@ -1976,12 +1982,26 @@ internal static partial class AvaloniaAutoUpdater
             }
 
             LogUpdateWarn($"Installer signer thumbprint is NOT trusted: {thumbprint}");
+            if (FORK_ALLOW_UNSIGNED_INSTALLERS)
+            {
+                LogUpdateWarn(
+                    "[CustomChannels] fork build: accepting installer with untrusted signature; SHA256 was already verified.");
+                return true;
+            }
+
             return false;
         }
         catch (Exception ex)
         {
             LogUpdateWarn("Could not validate installer signer thumbprint.");
             LogUpdateWarn(ex);
+            if (FORK_ALLOW_UNSIGNED_INSTALLERS)
+            {
+                LogUpdateWarn(
+                    "[CustomChannels] fork build: installer is unsigned; accepting after SHA256 verification.");
+                return true;
+            }
+
             return false;
         }
     }

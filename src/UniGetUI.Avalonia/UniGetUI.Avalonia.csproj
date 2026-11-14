@@ -298,6 +298,8 @@
         <ProjectReference Include="..\UniGetUI.Core.Settings\UniGetUI.Core.Settings.csproj" />
         <ProjectReference Include="..\UniGetUI.Core.Tools\UniGetUI.Core.Tools.csproj" />
         <ProjectReference Include="..\UniGetUI.Extensions.GitRepositories\UniGetUI.Extensions.GitRepositories.csproj" />
+        <!-- [CustomChannels] 自定义渠道核心库 -->
+        <ProjectReference Include="..\UniGetUI.Extensions.CustomChannels\UniGetUI.Extensions.CustomChannels.csproj" />
         <ProjectReference Include="..\UniGetUI.Extensions.Xcode\UniGetUI.Extensions.Xcode.csproj" Condition="'$(EnableXcodeExtension)' == 'true'" />
         <ProjectReference Include="..\UniGetUI.Interface.Enums\UniGetUI.Interface.Enums.csproj" />
         <ProjectReference Include="..\UniGetUI.Interface.IpcApi\UniGetUI.Interface.IpcApi.csproj" />

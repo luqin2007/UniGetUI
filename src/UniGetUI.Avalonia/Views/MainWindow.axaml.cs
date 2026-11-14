@@ -50,6 +50,7 @@ public enum PageType
     ManagerHealth,
     AgentSkills,
     Xcode,
+    CustomChannels, // [CustomChannels] 自定义渠道（GitHub/GitLab/OpenList/网盘/直链）
 }
 
 public partial class MainWindow : Window

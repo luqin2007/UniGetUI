@@ -1,0 +1,169 @@
+name: Upstream sync
+
+# 每日检查 Devolutions/UniGetUI 的最新正式 Release：
+#   1. 若我们的 custom 分支尚未包含该 tag，则执行 git merge；
+#   2. 合并成功 → 推送并触发 fork 构建；
+#   3. 合并冲突 → 中止合并、创建/更新 Issue，并把状态写入 sync-status 分支，
+#      应用启动时会读取该文件并在界面顶部显示提示。
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: Devolutions/UniGetUI
+  FORK_BRANCH: custom
+  STATUS_BRANCH: sync-status
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout custom
+        uses: actions/checkout@v4
+        with:
+          ref: custom
+          fetch-depth: 0
+
+      - name: Resolve upstream release tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq .tag_name)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Upstream latest release: $tag"
+
+      - name: Merge upstream tag
+        id: merge
+        env:
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name 'custom-channels-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null || true
+          git fetch --no-tags upstream "refs/tags/${TAG}:refs/tags/${TAG}" || git fetch upstream --tags
+
+          if git merge-base --is-ancestor "$TAG" HEAD; then
+            echo "Already contains $TAG; nothing to merge."
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git merge --no-ff -m "chore: sync upstream ${TAG}" "$TAG"; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            conflicts="$(git diff --name-only --diff-filter=U | paste -sd ',' -)"
+            git merge --abort
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "conflicts=${conflicts}" >> "$GITHUB_OUTPUT"
+            echo "::warning::Merge conflict on ${TAG}: ${conflicts}"
+          fi
+
+      - name: Verify integration anchors
+        if: steps.merge.outputs.merged == 'true' && steps.merge.outputs.changed == 'true'
+        shell: pwsh
+        run: ./scripts/custom-channels/verify-integration.ps1
+
+      - name: Push merged branch
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:${FORK_BRANCH}
+
+      - name: Open or update conflict issue
+        id: issue
+        if: steps.merge.outputs.merged == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --label upstream-sync --state open --json number --jq '.[0].number // empty')"
+          body=$(cat <<EOF
+          自动合并上游 ${TAG} 失败，fork 停留在旧版本。
+
+          冲突文件：
+          \`\`\`
+          ${CONFLICTS}
+          \`\`\`
+
+          处理方式：
+          1. 本地执行 \`git fetch upstream --tags && git merge ${TAG}\`；
+          2. 按 INTEGRATION.md 的集成点清单解决冲突（均带 \`[CustomChannels]\` 标记）；
+          3. 运行 \`pwsh ./scripts/custom-channels/verify-integration.ps1\` 自检；
+          4. 推送 \`custom\` 并触发构建。
+          EOF
+          )
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "issueUrl=$(gh issue view "$existing" --json url --jq .url)" >> "$GITHUB_OUTPUT"
+          else
+            url="$(gh issue create --title "上游同步冲突：${TAG}" --label upstream-sync --body "$body")"
+            echo "issueUrl=$url" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Close conflict issue when merge succeeded
+        if: steps.merge.outputs.merged == 'true' && steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for number in $(gh issue list --label upstream-sync --state open --json number --jq '.[].number'); do
+            gh issue close "$number" --comment "上游 ${{ steps.upstream.outputs.tag }} 已自动合并。"
+          done
+
+      - name: Write sync status
+        if: always() && steps.upstream.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          MERGED: ${{ steps.merge.outputs.merged }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          ISSUE_URL: ${{ steps.issue.outputs.issueUrl }}
+        run: |
+          set -euo pipefail
+          merged="${MERGED:-false}"
+          [ -z "$merged" ] && merged="false"
+          status=$(jq -n \
+            --arg tag "$TAG" \
+            --argjson merged "$merged" \
+            --arg conflicts "${CONFLICTS:-}" \
+            --arg issue "${ISSUE_URL:-}" \
+            --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{upstreamTag:$tag, merged:$merged, conflicts:$conflicts, issueUrl:$issue, updatedAt:$updated}')
+
+          repo="${GITHUB_REPOSITORY}"
+          sha="$(gh api "repos/${repo}/contents/sync-status.json?ref=${STATUS_BRANCH}" --jq .sha 2>/dev/null || true)"
+          if [ -z "$sha" ]; then
+            gh api -X POST "repos/${repo}/git/refs" \
+              -f ref="refs/heads/${STATUS_BRANCH}" -f sha="$(git rev-parse HEAD)" >/dev/null || true
+            sha="$(gh api "repos/${repo}/contents/sync-status.json?ref=${STATUS_BRANCH}" --jq .sha 2>/dev/null || true)"
+          fi
+
+          args=(-X PUT "repos/${repo}/contents/sync-status.json"
+                -f message="chore: update sync status for ${TAG}"
+                -f content="$(printf '%s' "$status" | base64 -w0)"
+                -f branch="${STATUS_BRANCH}")
+          [ -n "$sha" ] && args+=(-f sha="$sha")
+          gh api "${args[@]}" >/dev/null
+          echo "sync-status updated: $status"
+
+      - name: Trigger fork build
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run custom-channels-build.yml --ref ${FORK_BRANCH}

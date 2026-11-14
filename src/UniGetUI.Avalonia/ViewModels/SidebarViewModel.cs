@@ -73,6 +73,8 @@ public partial class SidebarViewModel : ViewModelBase
 
     public void SetExtensionEnabled(PageType page, bool enabled)
     {
+        // [CustomChannels] 导航项显隐由 NavigationPageOrder 依据 extension.IsEnabled 计算，这里只需触发重算
+        if (page == PageType.CustomChannels) NavigationPages = GetNavigationPages();
         if (page == PageType.GitRepositories) GitRepositoriesEnabled = enabled;
         if (page == PageType.AgentSkills) AgentSkillsEnabled = enabled;
 #if UNIGETUI_XCODE_EXTENSION
