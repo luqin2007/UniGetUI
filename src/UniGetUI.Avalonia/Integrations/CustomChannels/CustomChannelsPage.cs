@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -30,6 +31,7 @@ internal sealed class CustomChannelsPage : UserControl
     private readonly Button _installButton;
     private readonly Button _editButton;
     private readonly Button _removeButton;
+    private readonly Button _manualVersionButton;
 
     public CustomChannelsPage(CustomChannelsViewModel viewModel)
     {
@@ -55,6 +57,22 @@ internal sealed class CustomChannelsPage : UserControl
             if (_viewModel.SelectedCard is { } card)
             {
                 _viewModel.RemoveTarget(card);
+            }
+        });
+        _manualVersionButton = MakeAsyncButton("填写当前版本", async () =>
+        {
+            if (_viewModel.SelectedCard is not { } card)
+            {
+                return;
+            }
+
+            var value = await VersionInputDialog.ShowAsync(
+                TopLevel.GetTopLevel(this) as Window,
+                card.DisplayName,
+                card.LocalVersion);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                await _viewModel.SetManualVersionAsync(card, value);
             }
         });
 
@@ -121,7 +139,7 @@ internal sealed class CustomChannelsPage : UserControl
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
-            Children = { _installButton, _editButton, _removeButton },
+            Children = { _installButton, _manualVersionButton, _editButton, _removeButton },
         };
 
         _detailsPanel.Children.Add(_detailsTitle);
@@ -157,6 +175,7 @@ internal sealed class CustomChannelsPage : UserControl
     private void HookEvents()
     {
         _viewModel.Cards.CollectionChanged += OnCardsChanged;
+        _viewModel.Versions.CollectionChanged += (_, _) => Dispatcher.UIThread.Post(RefreshDetails);
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         UpdateStatus();
     }
@@ -266,7 +285,7 @@ internal sealed class CustomChannelsPage : UserControl
     }
 
     /// <summary>单个应用卡片：显式订阅属性变更，避免反射绑定。</summary>
-    private sealed class CustomChannelCardControl : Button
+    private sealed class CustomChannelCardControl : Border
     {
         private readonly CustomChannelCardViewModel _card;
         private readonly TextBlock _name = new()
@@ -292,14 +311,16 @@ internal sealed class CustomChannelsPage : UserControl
             Foreground = Brushes.OrangeRed,
         };
 
+        private readonly Button _check;
+
         public CustomChannelCardControl(CustomChannelCardViewModel card, CustomChannelsViewModel viewModel)
         {
             _card = card;
-            HorizontalContentAlignment = HorizontalAlignment.Stretch;
             Background = Brushes.Transparent;
             BorderThickness = new Thickness(1);
             CornerRadius = new CornerRadius(8);
             Padding = new Thickness(10, 8);
+            Cursor = new Cursor(StandardCursorType.Hand);
 
             var titleStack = new StackPanel { Spacing = 2, Children = { _name, _sources } };
             var versionStack = new StackPanel
@@ -308,13 +329,23 @@ internal sealed class CustomChannelsPage : UserControl
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Children = { _version, _kind },
             };
-            var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+
+            _check = new Button { Content = "检查", Padding = new Thickness(10, 2), Margin = new Thickness(8, 0, 0, 0) };
+            _check.Click += async (_, e) =>
+            {
+                e.Handled = true;
+                await viewModel.CheckSingleAsync(card);
+            };
+
+            var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
             Grid.SetColumn(versionStack, 1);
+            Grid.SetColumn(_check, 2);
             header.Children.Add(titleStack);
             header.Children.Add(versionStack);
+            header.Children.Add(_check);
 
-            Content = new StackPanel { Spacing = 4, Children = { header, _error } };
-            Click += (_, _) => viewModel.SelectedCard = card;
+            Child = new StackPanel { Spacing = 4, Children = { header, _error } };
+            PointerPressed += (_, _) => viewModel.SelectedCard = card;
 
             _card.PropertyChanged += (_, _) => Dispatcher.UIThread.Post(Render);
             Render();
@@ -329,6 +360,8 @@ internal sealed class CustomChannelsPage : UserControl
             _error.Text = _card.Error ?? string.Empty;
             _error.IsVisible = !string.IsNullOrWhiteSpace(_card.Error);
             Opacity = _card.IsChecking ? 0.6 : 1;
+            _check.Content = _card.IsChecking ? "检查中…" : "检查";
+            _check.IsEnabled = !_card.IsChecking;
         }
     }
 }

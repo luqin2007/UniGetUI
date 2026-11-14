@@ -19,13 +19,27 @@ public sealed partial class VersionResolver(
     public string? GetLocalVersion(TargetConfig target)
     {
         var config = target.Version;
-        return config.Mode switch
+        var version = config.Mode switch
         {
             LocalVersionMode.None => null,
             LocalVersionMode.Recorded => GetRecordedVersion(target),
             LocalVersionMode.Command => GetCommandVersion(target),
             _ => GetFileVersion(target),
         };
+
+        // 文件/命令读不到版本时退回到用户手动填写或上次更新记录的版本
+        if (version is null && config.Mode is LocalVersionMode.FileVersion or LocalVersionMode.Command)
+        {
+            var record = records.Read(target.Id);
+            if (record is not null && !string.IsNullOrWhiteSpace(record.Version))
+            {
+                logger.LogInformation(
+                    "目标 {Target} 未读取到本地版本，使用记录的版本 {Version}", target.Id, record.Version);
+                version = Normalize(record.Version);
+            }
+        }
+
+        return version;
     }
 
     private string? GetRecordedVersion(TargetConfig target)

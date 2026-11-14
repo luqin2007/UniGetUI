@@ -3,8 +3,11 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using UniGetUI.Extensions.CustomChannels.Configuration;
+using UniGetUI.Extensions.CustomChannels.Detection;
 using UniGetUI.Extensions.CustomChannels.Infrastructure;
+using UniGetUI.Extensions.CustomChannels.Models;
 
 namespace UniGetUI.Avalonia.Integrations.CustomChannels;
 
@@ -32,10 +35,15 @@ internal sealed class CustomChannelEditorDialog : Window
     private readonly StackPanel _sourcePanel = new() { Spacing = 8 };
     private readonly List<SourceRow> _rows = [];
     private readonly TextBlock _error = new() { Foreground = Brushes.OrangeRed, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _detectStatus = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 };
+    private readonly Func<TargetConfig, Task<TargetCheckResult>>? _checkAsync;
 
-    private CustomChannelEditorDialog(TargetConfig target)
+    private CustomChannelEditorDialog(
+        TargetConfig target,
+        Func<TargetConfig, Task<TargetCheckResult>>? checkAsync)
     {
         _target = target;
+        _checkAsync = checkAsync;
         Title = string.IsNullOrWhiteSpace(target.Id) ? "添加应用" : $"编辑 {target.DisplayName}";
         Width = 760;
         Height = 720;
@@ -66,10 +74,8 @@ internal sealed class CustomChannelEditorDialog : Window
         _versionPath.Text = target.Version.Path;
         _archivePasswords.Text = string.Join(",", target.Archive.Passwords);
 
-        foreach (var source in target.Sources)
-        {
-            _rows.Add(new SourceRow(source));
-        }
+        // 一个应用只保留一个渠道：编辑历史多渠道路配置时以第一个为准
+        _rows.Add(new SourceRow(target.Sources.FirstOrDefault() ?? new SourceConfig { Type = SourceType.GithubRelease }));
 
         RebuildSourcePanel();
 
@@ -77,7 +83,10 @@ internal sealed class CustomChannelEditorDialog : Window
         Opened += (_, _) => _id.Focus();
     }
 
-    public static async Task<TargetConfig?> ShowAsync(Window owner, TargetConfig? existing)
+    public static async Task<TargetConfig?> ShowAsync(
+        Window owner,
+        TargetConfig? existing,
+        Func<TargetConfig, Task<TargetCheckResult>>? checkAsync = null)
     {
         var copy = existing is null
             ? new TargetConfig
@@ -91,19 +100,12 @@ internal sealed class CustomChannelEditorDialog : Window
                 JsonSerializer.Serialize(existing, AppJsonContext.Default.TargetConfig),
                 AppJsonContext.Default.TargetConfig)!;
 
-        var dialog = new CustomChannelEditorDialog(copy);
+        var dialog = new CustomChannelEditorDialog(copy, checkAsync);
         return await dialog.ShowDialog<TargetConfig?>(owner).ConfigureAwait(true);
     }
 
     private Control BuildLayout()
     {
-        var addSource = new Button { Content = "+ 添加渠道", Padding = new Thickness(12, 6) };
-        addSource.Click += (_, _) =>
-        {
-            _rows.Add(new SourceRow(new SourceConfig { Type = SourceType.GithubRelease }));
-            RebuildSourcePanel();
-        };
-
         var save = new Button { Content = "保存", Padding = new Thickness(18, 6) };
         save.Click += (_, _) => TrySave();
 
@@ -118,14 +120,14 @@ internal sealed class CustomChannelEditorDialog : Window
             {
                 Section("渠道"),
                 _sourcePanel,
-                addSource,
+                _detectStatus,
                 Section("基础信息"),
                 Field("标识", _id),
                 Field("显示名称", _displayName),
                 Section("安装方式"),
                 Field("安装类型", _installKind),
-                Field("安装目录", _rootPath),
-                Field("可执行文件", _exePath),
+                FieldWithBrowse("安装目录", _rootPath, BrowseFolderAsync),
+                FieldWithBrowse("可执行文件", _exePath, BrowseExeAsync),
                 Field("目标文件名（单文件模式）", _targetFileName),
                 Field("静默参数（EXE）", _silentArgs),
                 _interactive,
@@ -155,17 +157,162 @@ internal sealed class CustomChannelEditorDialog : Window
         _sourcePanel.Children.Clear();
         for (int i = 0; i < _rows.Count; i++)
         {
-            int index = i;
             var row = _rows[i];
-            var remove = new Button { Content = "移除", Padding = new Thickness(8, 2) };
-            remove.Click += (_, _) =>
-            {
-                _rows.RemoveAt(index);
-                RebuildSourcePanel();
-            };
+            var detect = new Button { Content = "识别", Padding = new Thickness(12, 2) };
+            detect.Click += async (_, _) => await DetectAsync();
             row.PrimaryCommitted += OnSourcePrimaryCommitted;
-            _sourcePanel.Children.Add(row.Build(remove));
+            _sourcePanel.Children.Add(row.Build(detect));
         }
+    }
+
+    private async Task DetectAsync()
+    {
+        if (_rows.Count == 0 || _checkAsync is null)
+        {
+            return;
+        }
+
+        var source = _rows[0].ToConfig();
+        if (source is null)
+        {
+            ShowError("请先填写渠道信息（仓库 owner/repo、分享链接或直链）。");
+            return;
+        }
+
+        _detectStatus.Text = "正在识别…";
+        try
+        {
+            var probe = new TargetConfig
+            {
+                Id = string.IsNullOrWhiteSpace(_id.Text) ? "detect" : _id.Text!.Trim(),
+                DisplayName = _displayName.Text?.Trim(),
+                Install = new InstallConfig
+                {
+                    Kind = (InstallKind)(_installKind.SelectedItem ?? InstallKind.ZipOverwrite),
+                    RootPath = _rootPath.Text?.Trim() ?? string.Empty,
+                },
+                Version = new LocalVersionConfig { Mode = LocalVersionMode.FileVersion },
+                Sources = [source],
+            };
+
+            var result = await _checkAsync(probe);
+            var candidate = result.Best ?? result.Candidates.FirstOrDefault();
+            if (candidate is null)
+            {
+                _detectStatus.Text = result.Error is { Length: > 0 } error
+                    ? $"识别失败：{error}"
+                    : "识别失败：渠道未返回任何版本。";
+                return;
+            }
+
+            var detection = source.Type is SourceType.GithubRelease or SourceType.GitlabRelease
+                ? InstallDetector.FromAssetNames(candidate.Version.Assets.Select(a => a.Name))
+                : InstallDetector.FromUrl(source.Url ?? source.ShareUrl ?? source.OpenListPath);
+
+            ApplyDetection(source, candidate, detection);
+        }
+        catch (Exception ex)
+        {
+            _detectStatus.Text = $"识别失败：{ex.Message}";
+        }
+    }
+
+    private void ApplyDetection(SourceConfig source, VersionCandidate candidate, InstallDetection detection)
+    {
+        string suggested = source.Type is SourceType.GithubRelease or SourceType.GitlabRelease
+            ? InstallDetector.ToSlug((source.Repo ?? source.ProjectId ?? string.Empty).Split('/')[^1])
+            : InstallDetector.ToSlug(InstallDetector.NameFromUrl(source.Url ?? source.ShareUrl ?? source.OpenListPath));
+
+        if (string.IsNullOrWhiteSpace(_id.Text) && suggested.Length > 0)
+        {
+            _id.Text = suggested;
+        }
+
+        if (string.IsNullOrWhiteSpace(_displayName.Text) && suggested.Length > 0)
+        {
+            _displayName.Text = suggested;
+        }
+
+        _installKind.SelectedItem = detection.Kind;
+        if (!string.IsNullOrWhiteSpace(detection.TargetFileName))
+        {
+            _targetFileName.Text = detection.TargetFileName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(detection.ExePath))
+        {
+            _exePath.Text = detection.ExePath;
+        }
+
+        // 版本策略默认从文件读取；单文件模式直接指向识别到的可执行文件
+        _versionMode.SelectedItem = LocalVersionMode.FileVersion;
+        if (detection.Kind == InstallKind.SingleFile && !string.IsNullOrWhiteSpace(detection.ExePath))
+        {
+            _versionPath.Text = detection.ExePath;
+        }
+
+        _detectStatus.Text =
+            $"{detection.Reason}（最新版本 {candidate.Version.DisplayVersion}，共 {candidate.Version.Assets.Count} 个资产）";
+    }
+
+    private async Task BrowseFolderAsync()
+    {
+        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+        if (storage is null)
+        {
+            return;
+        }
+
+        var folders = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "选择安装目录",
+            AllowMultiple = false,
+            SuggestedStartLocation = await TryGetFolderAsync(_rootPath.Text),
+        });
+
+        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { Length: > 0 } path)
+        {
+            _rootPath.Text = path;
+        }
+    }
+
+    private async Task BrowseExeAsync()
+    {
+        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+        if (storage is null)
+        {
+            return;
+        }
+
+        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择可执行文件",
+            AllowMultiple = false,
+            SuggestedStartLocation = await TryGetFolderAsync(_rootPath.Text),
+            FileTypeFilter = [new FilePickerFileType("可执行文件") { Patterns = ["*.exe"] }],
+        });
+
+        if (files.Count == 0 || files[0].TryGetLocalPath() is not { Length: > 0 } fullPath)
+        {
+            return;
+        }
+
+        string root = _rootPath.Text?.Trim() ?? string.Empty;
+        if (root.Length > 0 && fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            _exePath.Text = Path.GetRelativePath(root, fullPath);
+        }
+        else
+        {
+            _exePath.Text = fullPath;
+        }
+    }
+
+    private static async Task<IStorageFolder?> TryGetFolderAsync(string? path)
+    {
+        // 起始目录由调用方忽略（无 owner 时无法安全解析），保持系统默认位置
+        await Task.CompletedTask;
+        return null;
     }
 
     /// <summary>标识留空时，从 GitHub/GitLab 渠道的仓库名推导一个可用标识。</summary>
@@ -276,6 +423,39 @@ internal sealed class CustomChannelEditorDialog : Window
             input,
         },
     };
+
+    /// <summary>带「浏览」按钮的输入行（目录用文件夹选择器，文件用文件选择器）。</summary>
+    private Control FieldWithBrowse(string label, Control input, Func<Task> browse)
+    {
+        var button = new Button { Content = "浏览…", Padding = new Thickness(10, 2), Margin = new Thickness(6, 0, 0, 0) };
+        button.Click += async (_, _) =>
+        {
+            try
+            {
+                await browse();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"选择失败：{ex.Message}");
+            }
+        };
+
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        Grid.SetColumn(input, 0);
+        Grid.SetColumn(button, 1);
+        row.Children.Add(input);
+        row.Children.Add(button);
+
+        return new StackPanel
+        {
+            Spacing = 4,
+            Children =
+            {
+                new TextBlock { Text = label, FontSize = 12, Opacity = 0.75 },
+                row,
+            },
+        };
+    }
 
     /// <summary>一行渠道编辑：类型 + 主参数 + 资产匹配 + 可选口令/密码。</summary>
     private sealed class SourceRow

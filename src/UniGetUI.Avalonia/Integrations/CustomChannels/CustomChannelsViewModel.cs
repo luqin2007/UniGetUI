@@ -81,22 +81,31 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
 
     partial void OnSelectedCardChanged(CustomChannelCardViewModel? value)
     {
+        RebuildVersions();
+        OnPropertyChanged(nameof(SelectedCardNotes));
+        OnPropertyChanged(nameof(SelectedCardReadme));
+        OnPropertyChanged(nameof(HasSelectedCard));
+    }
+
+    /// <summary>用当前选中卡片的候选版本重建版本列表（检查完成后也会调用）。</summary>
+    private void RebuildVersions()
+    {
+        string? previous = SelectedVersion?.Version.Key;
         Versions.Clear();
-        SelectedVersion = null;
-        if (value is null)
+        if (SelectedCard is null)
         {
+            SelectedVersion = null;
             return;
         }
 
-        foreach (var candidate in value.Candidates)
+        foreach (var candidate in SelectedCard.Candidates)
         {
             Versions.Add(new CustomChannelVersionViewModel(candidate));
         }
 
-        SelectedVersion = Versions.FirstOrDefault(v => v.IsSelectable) ?? Versions.FirstOrDefault();
-        OnPropertyChanged(nameof(SelectedCardNotes));
-        OnPropertyChanged(nameof(SelectedCardReadme));
-        OnPropertyChanged(nameof(HasSelectedCard));
+        SelectedVersion = previous is null
+            ? Versions.FirstOrDefault(v => v.IsSelectable) ?? Versions.FirstOrDefault()
+            : Versions.FirstOrDefault(v => v.Version.Key == previous) ?? Versions.FirstOrDefault();
     }
 
     partial void OnSelectedVersionChanged(CustomChannelVersionViewModel? value)
@@ -159,6 +168,39 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         }
     }
 
+    /// <summary>只检查单个应用（卡片上的「检查」按钮）。</summary>
+    public async Task CheckSingleAsync(CustomChannelCardViewModel card)
+    {
+        IsBusy = true;
+        StatusText = $"正在检查 {card.DisplayName}…";
+        try
+        {
+            await CheckCardAsync(card, forceRefresh: true, CancellationToken.None).ConfigureAwait(true);
+            StatusText = $"已检查 {card.DisplayName} · {DateTime.Now:HH:mm:ss}";
+        }
+        finally
+        {
+            IsBusy = false;
+            OnPropertyChanged(nameof(StatusSummary));
+        }
+    }
+
+    /// <summary>版本未知时由用户手动填写当前版本（写入版本记录并重新检查）。</summary>
+    public async Task SetManualVersionAsync(CustomChannelCardViewModel card, string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return;
+        }
+
+        _service.VersionRecords.Save(
+            card.Id,
+            version.Trim(),
+            card.Target.Sources.FirstOrDefault()?.Type.ToString(),
+            "手动填写");
+        await CheckSingleAsync(card).ConfigureAwait(true);
+    }
+
     public async Task CheckCardAsync(CustomChannelCardViewModel card, bool forceRefresh, CancellationToken ct)
     {
         await CheckGate.WaitAsync(ct).ConfigureAwait(false);
@@ -166,7 +208,15 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         {
             await Dispatcher.UIThread.InvokeAsync(() => card.IsChecking = true);
             var result = await _service.CheckAsync(card.Target, forceRefresh, ct).ConfigureAwait(false);
-            await Dispatcher.UIThread.InvokeAsync(() => card.Apply(result));
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                card.Apply(result);
+                if (ReferenceEquals(card, SelectedCard))
+                {
+                    // 检查完成前版本列表是空的，完成后必须重建，否则详情面板一直为空
+                    RebuildVersions();
+                }
+            });
         }
         catch (OperationCanceledException)
         {
@@ -224,7 +274,10 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
             return;
         }
 
-        var created = await CustomChannelEditorDialog.ShowAsync(owner, null);
+        var created = await CustomChannelEditorDialog.ShowAsync(
+            owner,
+            null,
+            target => _service.CheckAsync(target, forceRefresh: true));
         if (created is null)
         {
             return;
@@ -247,7 +300,10 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
             return;
         }
 
-        var edited = await CustomChannelEditorDialog.ShowAsync(owner, card.Target);
+        var edited = await CustomChannelEditorDialog.ShowAsync(
+            owner,
+            card.Target,
+            target => _service.CheckAsync(target, forceRefresh: true));
         if (edited is null)
         {
             return;
@@ -270,6 +326,7 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
 
     public void ReloadFromConfig()
     {
+        string? previousId = SelectedCard?.Id;
         _service.Reload();
         Cards.Clear();
         foreach (var target in _service.Config.Targets)
@@ -277,7 +334,7 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
             Cards.Add(new CustomChannelCardViewModel(target));
         }
 
-        SelectedCard = Cards.FirstOrDefault();
+        SelectedCard = Cards.FirstOrDefault(c => c.Id == previousId) ?? Cards.FirstOrDefault();
         OnPropertyChanged(nameof(StatusSummary));
     }
 
