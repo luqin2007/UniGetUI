@@ -26,9 +26,9 @@ internal sealed class CustomChannelsPage : UserControl
     private readonly TextBlock _detailsTitle = new() { FontSize = 16, FontWeight = FontWeight.SemiBold };
     private readonly TextBlock _detailsSubtitle = new() { FontSize = 12, Opacity = 0.75 };
     private readonly TextBlock _notesHeader = new() { FontSize = 13, FontWeight = FontWeight.SemiBold };
-    private readonly SelectableTextBlock _notesText = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly ContentControl _notesHost = new();
     private readonly TextBlock _readmeHeader = new() { FontSize = 13, FontWeight = FontWeight.SemiBold };
-    private readonly SelectableTextBlock _readmeText = new() { TextWrapping = TextWrapping.Wrap, Opacity = 0.85 };
+    private readonly ContentControl _readmeHost = new();
     private readonly Border _readmeBox;
     private readonly Button _installButton;
     private readonly Button _editButton;
@@ -78,7 +78,7 @@ internal sealed class CustomChannelsPage : UserControl
             }
         });
 
-        _readmeBox = Boxed(_readmeText);
+        _readmeBox = Boxed(_readmeHost);
 
         Content = BuildLayout();
         HookEvents();
@@ -153,13 +153,13 @@ internal sealed class CustomChannelsPage : UserControl
 
         _detailsPanel.Children.Add(_detailsTitle);
         _detailsPanel.Children.Add(_detailsSubtitle);
-        _detailsPanel.Children.Add(new TextBlock { Text = "可用版本", FontSize = 13, FontWeight = FontWeight.SemiBold });
+        _detailsPanel.Children.Add(buttons);
+        _detailsPanel.Children.Add(new TextBlock { Text = "可用版本", FontSize = 13, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
         _detailsPanel.Children.Add(_versionsList);
         _detailsPanel.Children.Add(_notesHeader);
-        _detailsPanel.Children.Add(Boxed(_notesText));
+        _detailsPanel.Children.Add(Boxed(_notesHost));
         _detailsPanel.Children.Add(_readmeHeader);
         _detailsPanel.Children.Add(_readmeBox);
-        _detailsPanel.Children.Add(buttons);
 
         var root = new Grid
         {
@@ -244,24 +244,26 @@ internal sealed class CustomChannelsPage : UserControl
         _detailsSubtitle.Text = card is null
             ? string.Empty
             : $"{card.SourceBadges} · {card.InstallKindText}";
+
+        string notes = _viewModel.SelectedCardNotes;
+        if (_viewModel.SelectedVersion is { IsSelectable: false, BlockReason: { } reason })
+        {
+            notes = $"{notes}\n\n（不可安装：{reason}）";
+        }
+
         _notesHeader.Text = _viewModel.SelectedVersionNotesTitle;
-        _notesText.Text = _viewModel.SelectedCardNotes;
+        _notesHost.Content = MarkdownPresenter.Build(notes);
 
         string readme = _viewModel.SelectedCardReadme;
         bool hasReadme = !string.IsNullOrWhiteSpace(readme);
         _readmeHeader.Text = _viewModel.SelectedReadmeTitle;
         _readmeHeader.IsVisible = hasReadme;
-        _readmeText.Text = readme;
+        _readmeHost.Content = MarkdownPresenter.Build(readme);
         _readmeBox.IsVisible = hasReadme;
 
         _installButton.IsEnabled = card is not null && _viewModel.SelectedVersion?.IsSelectable == true;
         _editButton.IsEnabled = card is not null;
         _removeButton.IsEnabled = card is not null;
-
-        if (_viewModel.SelectedVersion is { IsSelectable: false, BlockReason: { } reason })
-        {
-            _notesText.Text = $"{_notesText.Text}\n\n（不可安装：{reason}）";
-        }
     }
 
     private static Button MakeButton(string text, Action onClick)
@@ -326,6 +328,9 @@ internal sealed class CustomChannelsPage : UserControl
         };
 
         private readonly Button _check;
+        private readonly Button _open;
+        private readonly Button _openWeb;
+        private readonly Button _openFolder;
 
         public CustomChannelCardControl(CustomChannelCardViewModel card, CustomChannelsViewModel viewModel)
         {
@@ -344,21 +349,45 @@ internal sealed class CustomChannelsPage : UserControl
                 Children = { _version, _kind },
             };
 
-            _check = new Button { Content = "检查", Padding = new Thickness(10, 2), Margin = new Thickness(8, 0, 0, 0) };
+            _check = IconButton("\uE72C", "检查更新");
             _check.Click += async (_, e) =>
             {
                 e.Handled = true;
                 await viewModel.CheckSingleAsync(card);
             };
+            _open = IconButton("\uE768", "打开程序（需已填写可执行文件）");
+            _open.Click += (_, e) =>
+            {
+                e.Handled = true;
+                viewModel.OpenApp(card);
+            };
+            _openWeb = IconButton("\uE774", "打开网页（仓库 / 网盘 / 直链）");
+            _openWeb.Click += (_, e) =>
+            {
+                e.Handled = true;
+                viewModel.OpenWeb(card);
+            };
+            _openFolder = IconButton("\uE838", "打开安装目录");
+            _openFolder.Click += (_, e) =>
+            {
+                e.Handled = true;
+                viewModel.OpenFolder(card);
+            };
 
-            var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
+            var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
             Grid.SetColumn(versionStack, 1);
-            Grid.SetColumn(_check, 2);
             header.Children.Add(titleStack);
             header.Children.Add(versionStack);
-            header.Children.Add(_check);
 
-            Child = new StackPanel { Spacing = 4, Children = { header, _error } };
+            var actions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                Margin = new Thickness(0, 4, 0, 0),
+                Children = { _open, _openWeb, _openFolder, _check },
+            };
+
+            Child = new StackPanel { Spacing = 4, Children = { header, actions, _error } };
             PointerPressed += (_, _) => viewModel.SelectedCard = card;
 
             _card.PropertyChanged += (_, _) => Dispatcher.UIThread.Post(Render);
@@ -374,8 +403,25 @@ internal sealed class CustomChannelsPage : UserControl
             _error.Text = _card.Error ?? string.Empty;
             _error.IsVisible = !string.IsNullOrWhiteSpace(_card.Error);
             Opacity = _card.IsChecking ? 0.6 : 1;
-            _check.Content = _card.IsChecking ? "检查中…" : "检查";
             _check.IsEnabled = !_card.IsChecking;
+        }
+
+        /// <summary>图标按钮：Segoe Fluent Icons 字形，悬停提示文字。</summary>
+        private static Button IconButton(string glyph, string tooltip)
+        {
+            var button = new Button
+            {
+                Content = new TextBlock
+                {
+                    Text = glyph,
+                    FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"),
+                    FontSize = 14,
+                },
+                Padding = new Thickness(8, 3),
+                CornerRadius = new CornerRadius(6),
+            };
+            ToolTip.SetTip(button, tooltip);
+            return button;
         }
     }
 }

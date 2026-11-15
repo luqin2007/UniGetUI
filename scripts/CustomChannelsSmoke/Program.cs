@@ -5,9 +5,93 @@
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 using UniGetUI.Extensions.CustomChannels.Configuration;
 using UniGetUI.Extensions.CustomChannels.Infrastructure;
 using UniGetUI.Extensions.CustomChannels.Pan;
+using UniGetUI.Extensions.CustomChannels.Sources;
+
+// 开发辅助：列出夸克分享的目录内容（递归一层示例）
+//   dotnet run --project scripts/CustomChannelsSmoke -- list-quark <shareUrl> [子目录名]
+if (args.Length >= 2 && args[0] == "list-quark")
+{
+    var paths = AppPaths.Default;
+    var sessions = new PanSessionStore(new SecretStore(paths));
+    if (!sessions.HasSession(PanPlatform.Quark))
+    {
+        Console.WriteLine("没有夸克网盘会话，请先在应用中登录。");
+        return 2;
+    }
+
+    using var http = new HttpClient();
+    var loggerFactory = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Warning));
+    var api = new QuarkPanApi(http, sessions, loggerFactory.CreateLogger<QuarkPanApi>());
+    var (pwdId, pwd) = QuarkPanApi.ParseShareUrl(args[1]);
+    var stoken = await api.GetStokenAsync(pwdId, pwd).ConfigureAwait(false);
+
+    async Task ListDirAsync(string fid, string indent)
+    {
+        var entries = await api.ListShareAsync(pwdId, stoken, fid).ConfigureAwait(false);
+        foreach (var e in entries)
+        {
+            Console.WriteLine($"{indent}{(e.IsDir ? "[目录]" : "[文件]")} {e.Name}  ({e.Size} B)");
+            if (e.IsDir && args.Length >= 3 && args[2] == "-r")
+            {
+                await ListDirAsync(e.Fid, indent + "  ");
+            }
+        }
+    }
+
+    await ListDirAsync("0", string.Empty);
+    return 0;
+}
+
+// 开发辅助：验证带目录前缀的 pathPattern 能否列出候选版本
+//   dotnet run --project scripts/CustomChannelsSmoke -- check-quark <shareUrl> <pathPattern>
+if (args.Length >= 3 && args[0] == "check-quark")
+{
+    var paths = AppPaths.Default;
+    var sessions = new PanSessionStore(new SecretStore(paths));
+    if (!sessions.HasSession(PanPlatform.Quark))
+    {
+        Console.WriteLine("没有夸克网盘会话，请先在应用中登录。");
+        return 2;
+    }
+
+    using var http = new HttpClient();
+    var loggerFactory = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Warning));
+    var api = new QuarkPanApi(http, sessions, loggerFactory.CreateLogger<QuarkPanApi>());
+    var transferManager = new TransferManager(paths, new TransferConfig(), loggerFactory.CreateLogger<TransferManager>());
+    var source = new QuarkPanSource(
+        new SourceConfig { Type = SourceType.QuarkPan, ShareUrl = args[1], PathPattern = args[2] },
+        api,
+        sessions,
+        transferManager,
+        new TransferConfig(),
+        loggerFactory.CreateLogger<QuarkPanSource>());
+
+    try
+    {
+        var versions = await source.ListVersionsAsync(new VersionQuery(MaxVersions: 5)).ConfigureAwait(false);
+        foreach (var v in versions)
+        {
+            Console.WriteLine($"版本 {v.DisplayVersion} ← {string.Join(", ", v.Assets.Select(a => a.Name))}");
+        }
+
+        if (versions.Count == 0)
+        {
+            Console.WriteLine("没有匹配到任何版本");
+            return 1;
+        }
+
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"检查失败：{ex.Message}");
+        return 1;
+    }
+}
 
 int failures = 0;
 string tempRoot = Path.Join(Path.GetTempPath(), "cc-smoke-" + Guid.NewGuid().ToString("N"));

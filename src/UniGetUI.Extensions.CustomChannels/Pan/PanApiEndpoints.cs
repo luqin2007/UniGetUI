@@ -48,9 +48,9 @@ public static class PanApiEndpoints
         public static string ShareToken =>
             $"{ApiBase}/share/sharepage/token?{CommonQuery}";
 
-        public static string ShareDetail(string pwdId, string stoken, int page = 1, int size = 200) =>
+        public static string ShareDetail(string pwdId, string stoken, string pdirFid = "0", int page = 1, int size = 200) =>
             $"{ApiBase}/share/sharepage/detail?{CommonQuery}&pwd_id={pwdId}&stoken={Uri.EscapeDataString(stoken)}" +
-            $"&pdir_fid=0&force=0&_page={page}&_size={size}&_fetch_banner=0&_fetch_share=0&_fetch_total=1" +
+            $"&pdir_fid={Uri.EscapeDataString(pdirFid)}&force=0&_page={page}&_size={size}&_fetch_banner=0&_fetch_share=0&_fetch_total=1" +
             "&_sort=file_type:asc,updated_at:desc";
 
         public static string ShareSave => $"{ApiBase}/share/sharepage/save?{CommonQuery}";

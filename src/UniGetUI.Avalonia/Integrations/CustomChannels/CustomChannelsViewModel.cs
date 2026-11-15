@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text.Json;
 using Avalonia.Controls;
@@ -373,6 +374,107 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
     {
         _service.Config.Targets.RemoveAll(t => t.Id == card.Target.Id);
         PersistAndReload();
+    }
+
+    /// <summary>启动应用主程序（要求已在编辑中填写可执行文件）。</summary>
+    public void OpenApp(CustomChannelCardViewModel card)
+    {
+        try
+        {
+            var install = card.Target.Install;
+            if (string.IsNullOrWhiteSpace(install.ExePath))
+            {
+                _shell.Notify("无法打开", "尚未填写可执行文件，请先在「编辑」中配置。", isError: true);
+                return;
+            }
+
+            string fullPath = Path.IsPathRooted(install.ExePath)
+                ? install.ExePath
+                : Path.Combine(install.RootPath ?? string.Empty, install.ExePath);
+            if (!File.Exists(fullPath))
+            {
+                _shell.Notify("无法打开", $"可执行文件不存在：{fullPath}", isError: true);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo(fullPath)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(fullPath) ?? string.Empty,
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            _shell.Notify("打开失败", ex.Message, isError: true);
+        }
+    }
+
+    /// <summary>在浏览器中打开第一个启用渠道的页面（仓库 / 分享链接 / 直链）。</summary>
+    public void OpenWeb(CustomChannelCardViewModel card)
+    {
+        try
+        {
+            var url = card.Target.Sources
+                .Where(s => s.Enabled)
+                .Select(SourcePageUrl)
+                .FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                _shell.Notify("无法打开", "该应用没有可打开的网页地址。", isError: true);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            _shell.Notify("打开失败", ex.Message, isError: true);
+        }
+    }
+
+    /// <summary>在资源管理器中打开安装目录。</summary>
+    public void OpenFolder(CustomChannelCardViewModel card)
+    {
+        try
+        {
+            var root = card.Target.Install.RootPath;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                _shell.Notify("无法打开", $"安装目录不存在：{root}", isError: true);
+                return;
+            }
+
+            Process.Start("explorer.exe", root);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            _shell.Notify("打开失败", ex.Message, isError: true);
+        }
+    }
+
+    private static string? SourcePageUrl(SourceConfig source) => source.Type switch
+    {
+        SourceType.GithubRelease => string.IsNullOrWhiteSpace(source.Repo)
+            ? null
+            : $"https://github.com/{source.Repo}/releases",
+        SourceType.GitlabRelease => GitLabPageUrl(source),
+        SourceType.BaiduPan or SourceType.QuarkPan => source.ShareUrl,
+        SourceType.DirectUrl => source.Url,
+        _ => null,
+    };
+
+    private static string? GitLabPageUrl(SourceConfig source)
+    {
+        if (string.IsNullOrWhiteSpace(source.ProjectId))
+        {
+            return null;
+        }
+
+        var host = string.IsNullOrWhiteSpace(source.BaseUrl) ? "https://gitlab.com" : source.BaseUrl!;
+        return $"{host.TrimEnd('/')}/{source.ProjectId}/-/releases";
     }
 
     public void ReloadFromConfig()

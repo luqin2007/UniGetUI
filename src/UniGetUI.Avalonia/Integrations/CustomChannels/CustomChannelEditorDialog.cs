@@ -40,6 +40,7 @@ internal sealed class CustomChannelEditorDialog : Window
     private Control? _exeField;
     private Control? _targetFileField;
     private Control? _silentField;
+    private Control? _passwordsField;
 
     private CustomChannelEditorDialog(
         TargetConfig target,
@@ -53,8 +54,15 @@ internal sealed class CustomChannelEditorDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         CanResize = true;
 
-        _installKind.ItemsSource = Enum.GetValues<InstallKind>();
+        // 单文件模式已从选项中移除：下载的文件即程序文件且文件名可能变化，无法可靠定位
+        // （历史配置仍保留 SingleFile 枚举值以兼容，编辑保存后统一转为其他方式）
+        _installKind.ItemsSource = Enum.GetValues<InstallKind>()
+            .Where(k => k != InstallKind.SingleFile)
+            .ToArray();
         _versionMode.ItemsSource = Enum.GetValues<LocalVersionMode>();
+        _installKind.SelectedItem = target.Install.Kind == InstallKind.SingleFile
+            ? InstallKind.ZipOverwrite
+            : target.Install.Kind;
         _installKind.SelectionChanged += (_, _) => UpdateFieldVisibility();
 
         _id.Text = target.Id;
@@ -128,6 +136,7 @@ internal sealed class CustomChannelEditorDialog : Window
         cancel.Click += (_, _) => Close(null);
 
         _exeField = FieldWithBrowse("可执行文件", _exePath, BrowseExeAsync);
+        _passwordsField = Field("压缩包候选密码", _archivePasswords);
         _targetFileField = Field("目标文件名（单文件模式）", _targetFileName);
         _silentField = Field("静默参数（EXE）", _silentArgs);
 
@@ -147,6 +156,7 @@ internal sealed class CustomChannelEditorDialog : Window
                 Field("安装类型", _installKind),
                 FieldWithBrowse("安装目录", _rootPath, BrowseFolderAsync),
                 _exeField,
+                _passwordsField,
                 _targetFileField,
                 _silentField,
                 _interactive,
@@ -156,7 +166,6 @@ internal sealed class CustomChannelEditorDialog : Window
                 Field("本地版本读取方式", _versionMode),
                 Field("版本文件路径（可选）", _versionPath),
                 _allowDowngrade,
-                Field("压缩包候选密码", _archivePasswords),
                 _error,
                 new StackPanel
                 {
@@ -178,8 +187,14 @@ internal sealed class CustomChannelEditorDialog : Window
 
         if (_exeField is not null)
         {
-            // 只有解压覆盖与单文件模式需要知道主程序位置
-            _exeField.IsVisible = kind is InstallKind.ZipOverwrite or InstallKind.SingleFile;
+            // 解压覆盖需要定位主程序；MSI/EXE 也需要它供「打开程序」按钮使用
+            _exeField.IsVisible = kind is not InstallKind.SingleFile;
+        }
+
+        if (_passwordsField is not null)
+        {
+            // 压缩包候选密码只在解压覆盖模式下有意义
+            _passwordsField.IsVisible = kind == InstallKind.ZipOverwrite;
         }
 
         if (_targetFileField is not null)

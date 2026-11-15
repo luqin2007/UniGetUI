@@ -71,11 +71,12 @@ public sealed partial class QuarkPanApi(
     public async Task<IReadOnlyList<QuarkShareEntry>> ListShareAsync(
         string pwdId,
         string stoken,
+        string pdirFid = "0",
         CancellationToken ct = default)
     {
         using var request = CreateRequest(
             HttpMethod.Get,
-            PanApiEndpoints.Quark.ShareDetail(pwdId, stoken));
+            PanApiEndpoints.Quark.ShareDetail(pwdId, stoken, pdirFid));
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
         using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘目录详情", ct).ConfigureAwait(false);
 
@@ -98,7 +99,7 @@ public sealed partial class QuarkPanApi(
                     GetString(item, "share_fid_token") ?? string.Empty,
                     name,
                     GetLong(item, "size") ?? 0,
-                    GetInt(item, "dir") == 1));
+                    IsDirectory(item)));
             }
         }
 
@@ -352,6 +353,24 @@ public sealed partial class QuarkPanApi(
         }
 
         return root.TryGetProperty("data", out var data) ? data : root;
+    }
+
+    /// <summary>dir 字段不同接口可能返回布尔或数字（true/1），统一解析。</summary>
+    private static bool IsDirectory(JsonElement item)
+    {
+        if (!item.TryGetProperty("dir", out var value))
+        {
+            return false;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Number => value.TryGetInt32(out var n) && n == 1,
+            JsonValueKind.String => bool.TryParse(value.GetString(), out var b) ? b : false,
+            _ => false,
+        };
     }
 
     private static string? GetString(JsonElement element, string name)

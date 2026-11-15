@@ -123,9 +123,7 @@ internal sealed class CustomChannelVersionViewModel(VersionCandidate candidate)
     public string? Notes => Version.ReleaseNotes;
 
     public string ReadmeText => Version.Readme is { Sections.Count: > 0 } readme
-        ? string.Join(
-            "\n\n",
-            readme.Sections.Select(section => $"## {section.File}\n\n{section.Markdown}"))
+        ? string.Join("\n\n", readme.Sections.Select(section => section.Markdown))
         : string.Empty;
 
     public string ReadmeTitle => Version.Readme?.FileListText ?? "README";

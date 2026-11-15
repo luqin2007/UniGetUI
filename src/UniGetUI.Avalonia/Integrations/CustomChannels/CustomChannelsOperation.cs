@@ -107,7 +107,14 @@ internal sealed class CustomChannelsOperation : AbstractOperation
             }
         }
 
-        Line(line, progress.Stage == UpdateStage.Failed ? LineType.Error : LineType.Information);
+        // 进行中的进度走 ProgressIndicator：不入历史日志，界面折叠为单行实时刷新；
+        // 失败/取消/完成作为固定行保留
+        Line(line, progress.Stage switch
+        {
+            UpdateStage.Failed => LineType.Error,
+            UpdateStage.Completed or UpdateStage.Canceled => LineType.Information,
+            _ => LineType.ProgressIndicator,
+        });
     }
 
     protected override void OnRunCompleted()

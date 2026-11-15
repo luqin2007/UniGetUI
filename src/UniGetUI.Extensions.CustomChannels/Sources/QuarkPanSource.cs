@@ -48,9 +48,27 @@ public sealed partial class QuarkPanSource(
         _pwd = string.IsNullOrWhiteSpace(config.Pwd) ? urlPwd : config.Pwd;
 
         var stoken = await api.GetStokenAsync(pwdId, _pwd, ct).ConfigureAwait(false);
-        var entries = await api.ListShareAsync(pwdId, stoken, ct).ConfigureAwait(false);
 
         var pattern = ExtractFileNamePattern(config.PathPattern);
+        var dirSegments = ExtractDirectorySegments(config.PathPattern);
+
+        // pathPattern 可以带目录前缀（如 "MRS助手/*26*/MRS助手_*.zip"），
+        // 沿路径逐级按通配符进入分享的子目录；不带目录时保持原行为（根目录匹配）
+        var entries = await api.ListShareAsync(pwdId, stoken, ct: ct).ConfigureAwait(false);
+        var currentFid = "0";
+        foreach (var segment in dirSegments)
+        {
+            var next = entries.FirstOrDefault(e => e.IsDir && WildcardMatcher.IsMatch(e.Name, segment));
+            if (next is null)
+            {
+                throw new PanApiException(
+                    $"夸克网盘分享中未找到目录 '{segment}'（pathPattern 目录部分与分享结构不符）。");
+            }
+
+            currentFid = next.Fid;
+            entries = await api.ListShareAsync(pwdId, stoken, currentFid, ct: ct).ConfigureAwait(false);
+        }
+
         var matched = entries
             .Where(e => !e.IsDir && WildcardMatcher.IsMatch(e.Name, pattern))
             .OrderByDescending(e => ExtractVersion(e.Name), VersionComparer.Instance)
@@ -60,7 +78,7 @@ public sealed partial class QuarkPanSource(
         if (matched.Count == 0)
         {
             throw new PanApiException(
-                $"夸克网盘分享中没有匹配 '{pattern}' 的文件。请检查 pathPattern（夸克只支持分享根目录）。");
+                $"夸克网盘分享中没有匹配 '{pattern}' 的文件。请检查 pathPattern（目录部分为相对分享根目录）。");
         }
 
         var versions = new List<VersionInfo>(matched.Count);
@@ -224,6 +242,25 @@ public sealed partial class QuarkPanSource(
         var normalized = pathPattern.Replace('\\', '/');
         var index = normalized.LastIndexOf('/');
         return index < 0 ? normalized : normalized[(index + 1)..] is { Length: > 0 } name ? name : "*";
+    }
+
+    /// <summary>提取 pathPattern 中文件名之前的目录段，如 "a/*b/c.zip" → ["a", "*b"]。</summary>
+    private static IReadOnlyList<string> ExtractDirectorySegments(string? pathPattern)
+    {
+        if (string.IsNullOrWhiteSpace(pathPattern))
+        {
+            return [];
+        }
+
+        var normalized = pathPattern.Replace('\\', '/').TrimStart('/');
+        var index = normalized.LastIndexOf('/');
+        if (index <= 0)
+        {
+            return [];
+        }
+
+        return normalized[..index]
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     private string? ExtractVersion(string fileName)
