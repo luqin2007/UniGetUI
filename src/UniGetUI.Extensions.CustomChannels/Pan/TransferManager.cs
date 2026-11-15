@@ -78,6 +78,17 @@ public sealed class TransferManager
         }
     }
 
+    /// <summary>把一条转存记录标记为已失效（复用取链失败时调用），持久化并允许重新转存。</summary>
+    public void MarkDeleted(TransferRecord record, string? reason)
+    {
+        lock (_gate)
+        {
+            record.State = TransferState.Deleted;
+            record.LastError = reason;
+            SaveUnsafe();
+        }
+    }
+
     public void MarkDownloadCompleted(string platform, string fileName)
     {
         lock (_gate)

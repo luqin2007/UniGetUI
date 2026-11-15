@@ -135,9 +135,40 @@ public sealed partial class QuarkPanSource(
         }
 
         var reuse = transfers.FindReusable(PanPlatform.Quark, asset.Name, asset.Size ?? 0);
+        string? url = null;
         string ownFid;
 
-        if (reuse is null)
+        if (reuse is not null)
+        {
+            try
+            {
+                url = await api.GetDownloadUrlAsync(reuse.FileId, ct).ConfigureAwait(false);
+            }
+            catch (PanApiException ex)
+            {
+                // 台账里的转存文件可能已被清理或来自旧账号：取链失败说明文件不可用，
+                // 标记失效并重新转存，而不是直接把整个更新判失败。
+                logger.LogWarning(
+                    "复用夸克转存记录取链失败（{Name}），将重新转存：{Message}", reuse.FileName, ex.Message);
+                transfers.MarkDeleted(reuse, ex.Message);
+            }
+        }
+
+        if (url is not null)
+        {
+            ownFid = reuse!.FileId;
+            transfers.AddOrUpdate(new TransferRecord
+            {
+                Platform = PanPlatform.Quark,
+                ShareId = reuse.ShareId,
+                FileId = reuse.FileId,
+                Path = reuse.Path,
+                FileName = reuse.FileName,
+                Size = reuse.Size,
+                State = TransferState.Reused,
+            });
+        }
+        else
         {
             var result = await api.TransferAsync(
                 new TransferRequest(
@@ -168,23 +199,10 @@ public sealed partial class QuarkPanSource(
                 Size = asset.Size ?? 0,
                 State = TransferState.Active,
             });
-        }
-        else
-        {
-            ownFid = reuse.FileId;
-            transfers.AddOrUpdate(new TransferRecord
-            {
-                Platform = PanPlatform.Quark,
-                ShareId = reuse.ShareId,
-                FileId = reuse.FileId,
-                Path = reuse.Path,
-                FileName = reuse.FileName,
-                Size = reuse.Size,
-                State = TransferState.Reused,
-            });
+
+            url = await api.GetDownloadUrlAsync(ownFid, ct).ConfigureAwait(false);
         }
 
-        var url = await api.GetDownloadUrlAsync(ownFid, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(url))
         {
             throw new PanApiException("未能取得夸克网盘直链，请稍后重试。");

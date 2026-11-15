@@ -45,8 +45,11 @@ public static class PanHttp
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
+            var detail = TryExtractJsonMessage(body);
             throw new PanApiException(
-                $"{operation} 失败：HTTP {(int)response.StatusCode} {response.ReasonPhrase}",
+                detail is null
+                    ? $"{operation} 失败：HTTP {(int)response.StatusCode} {response.ReasonPhrase}"
+                    : $"{operation} 失败：HTTP {(int)response.StatusCode}，{detail}",
                 Truncate(body));
         }
 
@@ -62,6 +65,31 @@ public static class PanHttp
 
     public static string Truncate(string? text, int max = 500) =>
         string.IsNullOrEmpty(text) ? string.Empty : text.Length > max ? text[..max] + "…" : text;
+
+    /// <summary>从错误响应体中提取服务端的 message/error 提示（夸克 message / 百度 errmsg）。</summary>
+    private static string? TryExtractJsonMessage(string body)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            var root = document.RootElement;
+            foreach (var name in new[] { "message", "error_msg", "error_message", "errmsg" })
+            {
+                if (root.TryGetProperty(name, out var value) &&
+                    value.ValueKind == System.Text.Json.JsonValueKind.String &&
+                    value.GetString() is { Length: > 0 } text)
+                {
+                    return Truncate(text, 120);
+                }
+            }
+
+            return null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 
     public static void ApplyAccept(HttpRequestMessage request, string accept = "application/json, text/plain, */*")
     {
