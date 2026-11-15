@@ -59,7 +59,9 @@ internal sealed partial class CustomChannelCardViewModel : ObservableObject
 
     public string VersionText => LocalVersion is null && LatestVersion is null
         ? "尚未检查"
-        : $"{LocalVersion ?? "未知"} → {LatestVersion ?? "未知"}";
+        : LocalVersion is null
+            ? $"未安装 · 最新 {LatestVersion ?? "未知"}"
+            : $"{LocalVersion} → {LatestVersion ?? "未知"}";
 
     public void Apply(TargetCheckResult result)
     {

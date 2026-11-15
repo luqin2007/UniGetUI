@@ -302,9 +302,10 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         _service.Config.Targets.Add(created);
         PersistAndReload();
 
-        // 安装目录不存在时，添加完成后询问是否立即安装（先检查一次拿到可用版本）
+        // 安装目录不存在或为空（即应用未安装）时，添加完成后询问是否立即安装
+        // （先检查一次拿到可用版本）
         var card = Cards.FirstOrDefault(c => c.Id == created.Id);
-        if (card is null || Directory.Exists(created.Install.RootPath))
+        if (card is null || !LooksNotInstalled(created.Install.RootPath))
         {
             return;
         }
@@ -326,9 +327,9 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
 
         bool installNow = await ConfirmDialog.ShowAsync(
             owner,
-            "安装目录不存在",
-            $"目录 {created.Install.RootPath} 不存在，是否现在安装 {card.DisplayName} " +
-            $"{candidate.Version.DisplayVersion}？",
+            "应用尚未安装",
+            $"目录 {created.Install.RootPath} 不存在或为空，是否现在安装 {card.DisplayName} " +
+            $"{candidate.Version.DisplayVersion}？也可以稍后在版本列表中自选任意版本安装。",
             "立即安装",
             "稍后").ConfigureAwait(true);
 
@@ -387,6 +388,12 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         SelectedCard = Cards.FirstOrDefault(c => c.Id == previousId) ?? Cards.FirstOrDefault();
         OnPropertyChanged(nameof(StatusSummary));
     }
+
+    /// <summary>目录不存在，或存在但没有任何文件/子目录时，认为应用尚未安装。</summary>
+    private static bool LooksNotInstalled(string? root) =>
+        string.IsNullOrWhiteSpace(root) ||
+        !Directory.Exists(root) ||
+        !Directory.EnumerateFileSystemEntries(root).Any();
 
     private void PersistAndReload()
     {

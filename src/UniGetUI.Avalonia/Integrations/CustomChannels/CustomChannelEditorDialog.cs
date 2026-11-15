@@ -112,7 +112,17 @@ internal sealed class CustomChannelEditorDialog : Window
     private Control BuildLayout()
     {
         var save = new Button { Content = "保存", Padding = new Thickness(18, 6) };
-        save.Click += (_, _) => TrySave();
+        save.Click += async (_, _) =>
+        {
+            try
+            {
+                await TrySaveAsync();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"保存失败：{ex.Message}");
+            }
+        };
 
         var cancel = new Button { Content = "取消", Padding = new Thickness(18, 6) };
         cancel.Click += (_, _) => Close(null);
@@ -422,7 +432,7 @@ internal sealed class CustomChannelEditorDialog : Window
         }
     }
 
-    private void TrySave()
+    private async Task TrySaveAsync()
     {
         string id = _id.Text?.Trim() ?? string.Empty;
         if (id.Length == 0)
@@ -441,6 +451,14 @@ internal sealed class CustomChannelEditorDialog : Window
         }
 
         string root = _rootPath.Text?.Trim() ?? string.Empty;
+        if (root.Length == 0)
+        {
+            // 安装目录未填写：弹出目录选择对话框引导用户选择，而不是直接拒绝保存
+            ShowError(null);
+            await BrowseFolderAsync();
+            root = _rootPath.Text?.Trim() ?? string.Empty;
+        }
+
         if (root.Length == 0 || !Path.IsPathFullyQualified(root))
         {
             ShowError(@"安装目录必须是绝对路径，例如 C:\Apps\MyApp。");
@@ -475,7 +493,7 @@ internal sealed class CustomChannelEditorDialog : Window
         Close(_target);
     }
 
-    private void ShowError(string message) => _error.Text = message;
+    private void ShowError(string? message) => _error.Text = message ?? string.Empty;
 
     private static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
