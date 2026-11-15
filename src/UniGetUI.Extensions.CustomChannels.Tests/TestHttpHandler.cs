@@ -15,6 +15,8 @@ internal sealed class TestHttpHandler : HttpMessageHandler
 
     public List<string?> AuthorizationHeaders { get; } = new();
 
+    public List<string?> PrivateTokenHeaders { get; } = new();
+
     public int RequestCount => RequestUris.Count;
 
     public TestHttpHandler Enqueue(Func<HttpRequestMessage, HttpResponseMessage> responder)
@@ -42,6 +44,8 @@ internal sealed class TestHttpHandler : HttpMessageHandler
         RequestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
         AuthorizationHeaders.Add(
             request.Headers.TryGetValues("Authorization", out var values) ? values.FirstOrDefault() : null);
+        PrivateTokenHeaders.Add(
+            request.Headers.TryGetValues("PRIVATE-TOKEN", out var tokens) ? tokens.FirstOrDefault() : null);
 
         if (_responders.Count == 0)
         {

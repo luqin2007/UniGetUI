@@ -67,5 +67,8 @@ public static class PanApiEndpoints
         public static string FileDownload => $"{ApiBase}/file/download?{CommonQuery}";
 
         public static string FileDelete => $"{ApiBase}/file/delete?{CommonQuery}";
+
+        /// <summary>成员信息：登录态校验用的轻量接口。</summary>
+        public static string Members => $"{ApiBase}/members?{CommonQuery}";
     }
 }

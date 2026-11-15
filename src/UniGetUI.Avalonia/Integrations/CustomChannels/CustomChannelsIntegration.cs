@@ -22,6 +22,10 @@ internal static class CustomChannelsIntegration
         var previous = Interlocked.Exchange(ref _current, viewModel);
         previous?.Stop();
 
+        // 应用开启时检查已配置的网盘登录是否仍然有效（未登录的平台自动跳过），
+        // 失效时经顶部横幅提醒，避免更新时才发现 cookie 过期
+        _ = viewModel.ValidatePanSessionsAtStartupAsync();
+
         return new AppExtensionSession(
             () => new CustomChannelsPage(viewModel),
             () =>

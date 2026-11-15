@@ -25,6 +25,9 @@ internal sealed class CustomChannelsSettingsPage : UserControl, ISettingsPage
     private readonly TextBox _openListPassword = new() { PasswordChar = '●' };
     private readonly TextBox _openListRoot = new();
     private readonly CheckBox _openListAutoDownload = new() { Content = "本地实例缺失时自动下载官方 OpenList 二进制" };
+    private readonly TextBox _githubToken = new() { PasswordChar = '●', Watermark = "ghp_…（留空清除，未配置时匿名访问）" };
+    private readonly TextBox _gitlabToken = new() { PasswordChar = '●', Watermark = "glpat-…（留空清除）" };
+    private readonly TextBlock _credStatus = new() { FontSize = 12, Opacity = 0.8, TextWrapping = TextWrapping.Wrap };
     private readonly TextBox _concurrency = new();
     private readonly TextBox _speedLimit = new();
     private readonly TextBox _cacheMinutes = new();
@@ -71,6 +74,8 @@ internal sealed class CustomChannelsSettingsPage : UserControl, ISettingsPage
         _openListPassword.Text = config.OpenList.Password;
         _openListRoot.Text = config.OpenList.RootPath;
         _openListAutoDownload.IsChecked = config.OpenList.AutoDownloadBinary;
+        _githubToken.Text = _service.GitTokens.GetGithubToken() ?? string.Empty;
+        _gitlabToken.Text = _service.GitTokens.GetGitlabToken() ?? string.Empty;
 
         _concurrency.Text = config.Download.Concurrency.ToString();
         _speedLimit.Text = config.Download.MaxSpeedKBps.ToString();
@@ -99,6 +104,25 @@ internal sealed class CustomChannelsSettingsPage : UserControl, ISettingsPage
                 Field("密码", _openListPassword),
                 Field("网盘根路径", _openListRoot),
                 _openListAutoDownload,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children = { CheckButton("检测 OpenList", () => _service.CheckOpenListAsync(BuildOpenListProbe())) },
+                },
+                Header("GitHub / GitLab 访问令牌"),
+                Field("GitHub 令牌（匿名访问限 60 次/小时，配置后 5000 次/小时）", _githubToken),
+                Field("GitLab 令牌（对 gitlab.com 校验；自建实例请在各渠道的 BaseUrl 配置中填写同令牌）", _gitlabToken),
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children =
+                    {
+                        CheckButton("检测 GitHub 令牌", () => _service.CheckGithubTokenAsync()),
+                        CheckButton("检测 GitLab 令牌", () => _service.CheckGitlabTokenAsync()),
+                    },
+                },
                 Header("网盘账号"),
                 _panStatus,
                 new StackPanel
@@ -110,8 +134,11 @@ internal sealed class CustomChannelsSettingsPage : UserControl, ISettingsPage
                         LoginButton("登录百度网盘", PanPlatform.Baidu),
                         LoginButton("登录夸克网盘", PanPlatform.Quark),
                         ClearButton(),
+                        CheckButton("检测百度登录", () => _service.CheckBaiduSessionAsync()),
+                        CheckButton("检测夸克登录", () => _service.CheckQuarkSessionAsync()),
                     },
                 },
+                _credStatus,
                 Header("下载"),
                 Field("分片并发数（1-8）", _concurrency),
                 Field("全局限速 KB/s（0 为不限）", _speedLimit),
@@ -186,6 +213,40 @@ internal sealed class CustomChannelsSettingsPage : UserControl, ISettingsPage
         return open;
     }
 
+    /// <summary>凭据检测按钮：用设置页当前填写值探测，结果写状态行。</summary>
+    private Button CheckButton(string text, Func<Task<CredentialCheckResult>> check)
+    {
+        var button = new Button { Content = text, Padding = new Thickness(14, 6) };
+        button.Click += async (_, _) =>
+        {
+            _credStatus.Text = "正在检测…";
+            try
+            {
+                var result = await check();
+                _credStatus.Text = $"{result.Name}：{result.Message}";
+                _credStatus.Opacity = result.Ok ? 0.85 : 1;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex);
+                _credStatus.Text = $"检测失败：{ex.Message}";
+            }
+        };
+        return button;
+    }
+
+    /// <summary>把设置页当前填写的 OpenList 值构造成探测配置（无需先保存）。</summary>
+    private OpenListConfig BuildOpenListProbe() => new()
+    {
+        Mode = (OpenListMode)(_openListMode.SelectedItem ?? OpenListMode.Disabled),
+        BaseUrl = _openListUrl.Text?.Trim(),
+        Username = _openListUser.Text?.Trim(),
+        Password = _openListPassword.Text,
+        Token = _service.Config.OpenList.Token,
+        RootPath = _openListRoot.Text?.Trim(),
+        LocalPort = _service.Config.OpenList.LocalPort,
+    };
+
     private Button LoginButton(string text, string platform)
     {
         var button = new Button { Content = text, Padding = new Thickness(14, 6) };
@@ -237,6 +298,10 @@ internal sealed class CustomChannelsSettingsPage : UserControl, ISettingsPage
             config.OpenList.Password = string.IsNullOrWhiteSpace(_openListPassword.Text) ? null : _openListPassword.Text;
             config.OpenList.RootPath = string.IsNullOrWhiteSpace(_openListRoot.Text) ? "/" : _openListRoot.Text.Trim();
             config.OpenList.AutoDownloadBinary = _openListAutoDownload.IsChecked == true;
+
+            // 令牌存 SecretStore（DPAPI 加密），不进 updater.json 明文；留空表示清除
+            _service.GitTokens.SetGithubToken(_githubToken.Text);
+            _service.GitTokens.SetGitlabToken(_gitlabToken.Text);
 
             config.Download.Concurrency = ParseInt(_concurrency.Text, config.Download.Concurrency, 1, 8);
             config.Download.MaxSpeedKBps = ParseInt(_speedLimit.Text, config.Download.MaxSpeedKBps, 0, 1024 * 1024);

@@ -22,6 +22,7 @@ public sealed class CustomChannelsService : IDisposable
     private readonly SecretStore _secrets;
     private readonly OpenListRuntime _openList;
     private readonly PanSessionStore _panSessions;
+    private readonly GitTokenStore _gitTokens;
     private readonly TransferManager _transfers;
     private readonly VersionRecordStore _versionRecords;
     private readonly VersionCache _cache = new();
@@ -49,6 +50,7 @@ public sealed class CustomChannelsService : IDisposable
 
         _secrets = new SecretStore(paths);
         _panSessions = new PanSessionStore(_secrets);
+        _gitTokens = new GitTokenStore(_secrets);
         _transfers = new TransferManager(paths, Config.Transfer, loggerFactory.CreateLogger<TransferManager>());
         _versionRecords = new VersionRecordStore(paths, loggerFactory.CreateLogger<VersionRecordStore>());
         _readmeStore = new ReadmeStore(paths);
@@ -75,6 +77,8 @@ public sealed class CustomChannelsService : IDisposable
     public string? LastLoadError { get; private set; }
 
     public PanSessionStore PanSessions => _panSessions;
+
+    public GitTokenStore GitTokens => _gitTokens;
 
     public TransferManager Transfers => _transfers;
 
@@ -119,6 +123,7 @@ public sealed class CustomChannelsService : IDisposable
             _panSessions,
             _transfers,
             _openList,
+            _gitTokens,
             _loggerFactory);
 
         var resolver = new VersionResolver(_versionRecords, _loggerFactory.CreateLogger<VersionResolver>());
@@ -251,6 +256,103 @@ public sealed class CustomChannelsService : IDisposable
 
     /// <summary>清理过期的下载/暂存残留。</summary>
     public (int Files, long Bytes) CleanupStale(TimeSpan maxAge) => WorkspaceGuard.CleanupStale(Paths, maxAge);
+
+    /// <summary>校验 GitHub / GitLab 全局令牌（未配置时返回 Skipped）。</summary>
+    public Task<CredentialCheckResult> CheckGithubTokenAsync(CancellationToken ct = default) =>
+        CheckTokenAsync(() => _credentialChecker.CheckGithubTokenAsync(_gitTokens.GetGithubToken(), ct));
+
+    public Task<CredentialCheckResult> CheckGitlabTokenAsync(CancellationToken ct = default) =>
+        CheckTokenAsync(() => _credentialChecker.CheckGitlabTokenAsync(_gitTokens.GetGitlabToken(), ct: ct));
+
+    /// <summary>校验百度网盘登录状态（未登录返回 Skipped）。</summary>
+    public async Task<CredentialCheckResult> CheckBaiduSessionAsync(CancellationToken ct = default)
+    {
+        if (!_panSessions.HasSession(PanPlatform.Baidu))
+        {
+            return CredentialCheckResult.Skip("百度网盘", "未登录，跳过。");
+        }
+
+        try
+        {
+            await _sourceFactory.Baidu.ValidateSessionAsync(ct).ConfigureAwait(false);
+            return CredentialCheckResult.Pass("百度网盘", "登录有效。");
+        }
+        catch (Exception ex) when (ex is PanApiException or HttpRequestException or TaskCanceledException)
+        {
+            return CredentialCheckResult.Fail("百度网盘", ex.Message);
+        }
+    }
+
+    /// <summary>校验夸克网盘登录状态（未登录返回 Skipped）。</summary>
+    public async Task<CredentialCheckResult> CheckQuarkSessionAsync(CancellationToken ct = default)
+    {
+        if (!_panSessions.HasSession(PanPlatform.Quark))
+        {
+            return CredentialCheckResult.Skip("夸克网盘", "未登录，跳过。");
+        }
+
+        try
+        {
+            await _sourceFactory.Quark.ValidateSessionAsync(ct).ConfigureAwait(false);
+            return CredentialCheckResult.Pass("夸克网盘", "登录有效。");
+        }
+        catch (Exception ex) when (ex is PanApiException or HttpRequestException or TaskCanceledException)
+        {
+            return CredentialCheckResult.Fail("夸克网盘", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 校验 OpenList 连通性与凭据。<paramref name="probe"/> 传入设置页当前填写值（未保存也可检测）；
+    /// 传 null 时使用已保存的配置。
+    /// </summary>
+    public async Task<CredentialCheckResult> CheckOpenListAsync(
+        OpenListConfig? probe = null,
+        CancellationToken ct = default)
+    {
+        var effective = probe ?? Config.OpenList;
+        if (effective.Mode == OpenListMode.Disabled)
+        {
+            return CredentialCheckResult.Skip("OpenList", "运行模式为 disabled，跳过。");
+        }
+
+        try
+        {
+            // 用临时客户端探测：不影响正在运行的登录缓存，也不触发本地实例下载
+            var client = new OpenListClient(
+                _http,
+                () => effective,
+                _loggerFactory.CreateLogger<OpenListClient>());
+
+            var ping = await client.PingAsync(ct).ConfigureAwait(false);
+            if (ping != "在线")
+            {
+                return CredentialCheckResult.Fail("OpenList", $"实例不可达：{ping}");
+            }
+
+            await client.LoginAsync(ct).ConfigureAwait(false);
+            return CredentialCheckResult.Pass("OpenList", $"服务在线（{client.BaseUrl}），凭据有效。");
+        }
+        catch (Exception ex) when (ex is PanApiException or HttpRequestException or TaskCanceledException)
+        {
+            return CredentialCheckResult.Fail("OpenList", ex.Message);
+        }
+    }
+
+    private CredentialChecker _credentialChecker => new(_http, _loggerFactory.CreateLogger<CredentialChecker>());
+
+    private async Task<CredentialCheckResult> CheckTokenAsync(Func<Task<CredentialCheckResult>> check)
+    {
+        try
+        {
+            return await check().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "令牌校验失败");
+            return CredentialCheckResult.Fail("令牌校验", $"网络错误：{ex.Message}");
+        }
+    }
 
     public void Dispose()
     {

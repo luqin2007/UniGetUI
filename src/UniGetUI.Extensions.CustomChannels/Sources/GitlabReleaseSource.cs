@@ -7,7 +7,11 @@ using Microsoft.Extensions.Logging;
 namespace UniGetUI.Extensions.CustomChannels.Sources;
 
 /// <summary>GitLab Release 渠道，支持自建实例与私有项目 token。</summary>
-public sealed class GitlabReleaseSource(HttpClient http, SourceConfig config, ILogger logger) : UpdateSourceBase, IReadmeProvider
+public sealed class GitlabReleaseSource(
+    HttpClient http,
+    SourceConfig config,
+    ILogger logger,
+    string? fallbackToken = null) : UpdateSourceBase, IReadmeProvider
 {
     private const int PerPage = 100;
 
@@ -108,11 +112,11 @@ public sealed class GitlabReleaseSource(HttpClient http, SourceConfig config, IL
         }
 
         Dictionary<string, string>? headers = null;
-        if (!string.IsNullOrWhiteSpace(config.Token))
+        if (!string.IsNullOrWhiteSpace(EffectiveToken))
         {
             headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["PRIVATE-TOKEN"] = config.Token,
+                ["PRIVATE-TOKEN"] = EffectiveToken,
             };
         }
 
@@ -301,12 +305,16 @@ public sealed class GitlabReleaseSource(HttpClient http, SourceConfig config, IL
             ? value.GetString()
             : null;
 
+    /// <summary>渠道令牌优先，未配置时回退到全局令牌（设置页配置，SecretStore 存储）。</summary>
+    private string? EffectiveToken =>
+        !string.IsNullOrWhiteSpace(config.Token) ? config.Token : fallbackToken;
+
     private HttpRequestMessage CreateRequest(string url)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrWhiteSpace(config.Token))
+        if (!string.IsNullOrWhiteSpace(EffectiveToken))
         {
-            request.Headers.TryAddWithoutValidation("PRIVATE-TOKEN", config.Token);
+            request.Headers.TryAddWithoutValidation("PRIVATE-TOKEN", EffectiveToken);
         }
 
         return request;

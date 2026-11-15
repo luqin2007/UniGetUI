@@ -155,6 +155,49 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         await CheckAllAsync(forceRefresh: false).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// 应用启动时的网盘登录状态检查（应用开启时调用；未登录的平台直接跳过）。
+    /// 发现失效登录时经顶部横幅提醒，避免用到时才发现 cookie 过期。
+    /// </summary>
+    public async Task ValidatePanSessionsAtStartupAsync()
+    {
+        try
+        {
+            var problems = new List<string>();
+
+            if (_service.PanSessions.HasSession(PanPlatform.Baidu))
+            {
+                var baidu = await _service.CheckBaiduSessionAsync().ConfigureAwait(false);
+                if (!baidu.Ok && !baidu.Skipped)
+                {
+                    problems.Add($"百度网盘：{baidu.Message}");
+                }
+            }
+
+            if (_service.PanSessions.HasSession(PanPlatform.Quark))
+            {
+                var quark = await _service.CheckQuarkSessionAsync().ConfigureAwait(false);
+                if (!quark.Ok && !quark.Skipped)
+                {
+                    problems.Add($"夸克网盘：{quark.Message}");
+                }
+            }
+
+            if (problems.Count > 0)
+            {
+                _shell.Notify(
+                    "网盘登录已失效",
+                    string.Join("\n", problems) + "\n请到「设置 > 扩展 > 自定义渠道」重新登录。",
+                    isError: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 启动检查属于尽力而为的后台任务，任何异常都不应影响正常启动
+            Logger.Warn($"网盘登录启动检查失败：{ex.Message}");
+        }
+    }
+
     public async Task CheckAllAsync(bool forceRefresh)
     {
         if (Cards.Count == 0)

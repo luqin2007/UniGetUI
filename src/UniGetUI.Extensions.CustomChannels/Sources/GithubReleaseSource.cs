@@ -7,7 +7,11 @@ using Microsoft.Extensions.Logging;
 namespace UniGetUI.Extensions.CustomChannels.Sources;
 
 /// <summary>GitHub Release 渠道：分页列举全部版本，含更新说明与预发布标记。</summary>
-public sealed class GithubReleaseSource(HttpClient http, SourceConfig config, ILogger logger) : UpdateSourceBase, IReadmeProvider
+public sealed class GithubReleaseSource(
+    HttpClient http,
+    SourceConfig config,
+    ILogger logger,
+    string? fallbackToken = null) : UpdateSourceBase, IReadmeProvider
 {
     private const int PerPage = 100;
 
@@ -89,9 +93,9 @@ public sealed class GithubReleaseSource(HttpClient http, SourceConfig config, IL
             ["Accept"] = "application/octet-stream",
         };
 
-        if (!string.IsNullOrWhiteSpace(config.Token))
+        if (!string.IsNullOrWhiteSpace(EffectiveToken))
         {
-            headers["Authorization"] = $"Bearer {config.Token}";
+            headers["Authorization"] = $"Bearer {EffectiveToken}";
         }
 
         return Task.FromResult<AssetRef?>(new AssetRef(asset.Name, asset.Size, asset.Sha256, uri, headers));
@@ -293,15 +297,19 @@ public sealed class GithubReleaseSource(HttpClient http, SourceConfig config, IL
             ? value.GetString()
             : null;
 
+    /// <summary>渠道令牌优先，未配置时回退到全局令牌（设置页配置，SecretStore 存储）。</summary>
+    private string? EffectiveToken =>
+        !string.IsNullOrWhiteSpace(config.Token) ? config.Token : fallbackToken;
+
     private HttpRequestMessage CreateRequest(string url)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.ParseAdd("application/vnd.github+json");
         request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
 
-        if (!string.IsNullOrWhiteSpace(config.Token))
+        if (!string.IsNullOrWhiteSpace(EffectiveToken))
         {
-            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {config.Token}");
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {EffectiveToken}");
         }
 
         return request;

@@ -307,6 +307,18 @@ public sealed partial class QuarkPanApi(
         return await PanHttp.ReadJsonAsync(response, operation, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// 校验当前登录会话是否有效：轻量调用成员信息接口，
+    /// 失效时抛出 <see cref="PanApiException"/>（含重新登录提示）。
+    /// </summary>
+    public async Task ValidateSessionAsync(CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, PanApiEndpoints.Quark.Members);
+        using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘会话校验", ct).ConfigureAwait(false);
+        GetData(document.RootElement, "夸克网盘会话校验");
+    }
+
     private async Task<JsonDocument> PostAsync(string url, JsonNode payload, string operation, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Post, url, PanHttp.Json(payload));

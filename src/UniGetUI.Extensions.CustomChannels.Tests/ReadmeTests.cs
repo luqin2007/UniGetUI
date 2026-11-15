@@ -4,6 +4,7 @@ using UniGetUI.Extensions.CustomChannels.Infrastructure;
 using UniGetUI.Extensions.CustomChannels.Models;
 using UniGetUI.Extensions.CustomChannels.OpenList;
 using UniGetUI.Extensions.CustomChannels.Pan;
+using UniGetUI.Extensions.CustomChannels.Services;
 using UniGetUI.Extensions.CustomChannels.Sources;
 using UniGetUI.Extensions.CustomChannels.Update;
 using FluentAssertions;
@@ -278,7 +279,8 @@ public sealed class ReadmeTests
         var openList = new OpenListRuntime(
             paths, () => config.OpenList, config.Download, NullLogger<OpenListRuntime>.Instance);
         var factory = new UpdateSourceFactory(
-            http, config, paths, sessions, transfers, openList, NullLoggerFactory.Instance);
+            http, config, paths, sessions, transfers, openList,
+            new GitTokenStore(new SecretStore(paths)), NullLoggerFactory.Instance);
 
         var records = new VersionRecordStore(paths, NullLogger<VersionRecordStore>.Instance);
         var resolver = new VersionResolver(records, NullLogger<VersionResolver>.Instance);

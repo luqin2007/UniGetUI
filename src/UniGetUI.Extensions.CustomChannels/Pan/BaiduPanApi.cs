@@ -290,6 +290,20 @@ public sealed partial class BaiduPanApi(
         return true;
     }
 
+    /// <summary>
+    /// 校验当前登录会话是否有效（能否取得 bdstoken），
+    /// 未登录或失效时抛出 <see cref="PanApiException"/>。
+    /// </summary>
+    public async Task ValidateSessionAsync(CancellationToken ct = default)
+    {
+        var cookie = RequireCookie("尚未登录百度网盘。");
+        var bdstoken = await GetBdstokenAsync(cookie, ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(bdstoken))
+        {
+            throw new PanApiException("百度网盘登录已失效（无法获取 bdstoken），请重新登录。");
+        }
+    }
+
     private async Task<string?> GetBdstokenAsync(string cookie, CancellationToken ct)
     {
         try

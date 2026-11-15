@@ -4,6 +4,7 @@ using UniGetUI.Extensions.CustomChannels.Infrastructure;
 using UniGetUI.Extensions.CustomChannels.Models;
 using UniGetUI.Extensions.CustomChannels.OpenList;
 using UniGetUI.Extensions.CustomChannels.Pan;
+using UniGetUI.Extensions.CustomChannels.Services;
 using Microsoft.Extensions.Logging;
 
 namespace UniGetUI.Extensions.CustomChannels.Sources;
@@ -17,6 +18,7 @@ public sealed class UpdateSourceFactory
     private readonly PanSessionStore _sessions;
     private readonly TransferManager _transfers;
     private readonly OpenListRuntime _openList;
+    private readonly GitTokenStore _gitTokens;
     private readonly ILoggerFactory _loggerFactory;
     private readonly BaiduPanApi _baidu;
     private readonly QuarkPanApi _quark;
@@ -28,6 +30,7 @@ public sealed class UpdateSourceFactory
         PanSessionStore sessions,
         TransferManager transfers,
         OpenListRuntime openList,
+        GitTokenStore gitTokens,
         ILoggerFactory loggerFactory)
     {
         _http = http;
@@ -36,6 +39,7 @@ public sealed class UpdateSourceFactory
         _sessions = sessions;
         _transfers = transfers;
         _openList = openList;
+        _gitTokens = gitTokens;
         _loggerFactory = loggerFactory;
         _baidu = new BaiduPanApi(http, sessions, loggerFactory.CreateLogger<BaiduPanApi>());
         _quark = new QuarkPanApi(http, sessions, loggerFactory.CreateLogger<QuarkPanApi>());
@@ -54,10 +58,13 @@ public sealed class UpdateSourceFactory
 
         return config.Type switch
         {
+            // 渠道未单独配置令牌时回退到全局令牌（SecretStore，设置页配置）
             SourceType.GithubRelease => new GithubReleaseSource(
-                _http, config, _loggerFactory.CreateLogger<GithubReleaseSource>()),
+                _http, config, _loggerFactory.CreateLogger<GithubReleaseSource>(),
+                fallbackToken: _gitTokens.GetGithubToken()),
             SourceType.GitlabRelease => new GitlabReleaseSource(
-                _http, config, _loggerFactory.CreateLogger<GitlabReleaseSource>()),
+                _http, config, _loggerFactory.CreateLogger<GitlabReleaseSource>(),
+                fallbackToken: _gitTokens.GetGitlabToken()),
             SourceType.BaiduPan => new BaiduPanSource(
                 config, _baidu, _sessions, _transfers, _root.Transfer,
                 _loggerFactory.CreateLogger<BaiduPanSource>()),
