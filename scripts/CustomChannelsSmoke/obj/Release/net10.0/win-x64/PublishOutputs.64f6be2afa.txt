@@ -1,2 +1,0 @@
-C:\Dev\projects\UniGetUI\scripts\CustomChannelsSmoke\bin\Release\net10.0\win-x64\publish\UniGetUI.CustomChannels.Smoke.exe
-C:\Dev\projects\UniGetUI\scripts\CustomChannelsSmoke\bin\Release\net10.0\win-x64\publish\UniGetUI.Extensions.CustomChannels.pdb

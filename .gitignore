@@ -48,6 +48,9 @@ src/UniGetUI.Pinget.Cli/obj
 scripts/CargoSmoke/bin/
 scripts/CargoSmoke/obj/
 
+scripts/CustomChannelsSmoke/bin/
+scripts/CustomChannelsSmoke/obj/
+
 src/ExternalLibraries.*/bin
 src/ExternalLibraries.*/obj
 src/ExternalLibraries.*/out
