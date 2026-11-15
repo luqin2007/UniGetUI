@@ -81,6 +81,16 @@ jobs:
       - name: Unit tests (custom channels)
         run: dotnet test src/UniGetUI.Extensions.CustomChannels.Tests/UniGetUI.Extensions.CustomChannels.Tests.csproj --nologo -v q
 
+      # NativeAOT 冒烟：在与发布版一致（禁用反射式序列化）的环境里运行核心路径，
+      # 拦截只有发布版才能暴露的 AOT 运行时错误
+      - name: AOT smoke (custom channels)
+        shell: pwsh
+        run: |
+          dotnet publish scripts/CustomChannelsSmoke -c Release -r win-x64 --nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "scripts/CustomChannelsSmoke/bin/Release/net10.0/win-x64/publish/UniGetUI.CustomChannels.Smoke.exe"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Publish (NativeAOT)
         id: publish_aot
         continue-on-error: true
