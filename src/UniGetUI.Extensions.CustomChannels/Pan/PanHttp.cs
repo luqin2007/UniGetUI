@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace UniGetUI.Extensions.CustomChannels.Pan;
 
@@ -29,8 +30,9 @@ internal static class PanHttp
         return request;
     }
 
-    public static StringContent Json(object? payload) =>
-        new(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+    /// <summary>用 JsonNode 构造请求体：NativeAOT 下禁用反射序列化，DOM 直写是安全路径。</summary>
+    public static StringContent Json(JsonNode? payload) =>
+        new(payload?.ToJsonString() ?? "null", Encoding.UTF8, "application/json");
 
     public static FormUrlEncodedContent Form(IEnumerable<KeyValuePair<string, string>> pairs) =>
         new(pairs);

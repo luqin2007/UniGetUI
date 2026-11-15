@@ -1,8 +1,14 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace UniGetUI.Extensions.CustomChannels.Infrastructure;
 
 public sealed record ReadmeIndexEntry(string Sha256, DateTimeOffset CheckedAt);
+
+/// <summary>README 索引的源生成序列化上下文：NativeAOT 下反射序列化被禁用。</summary>
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(Dictionary<string, ReadmeIndexEntry>))]
+internal sealed partial class ReadmeIndexContext : JsonSerializerContext;
 
 /// <summary>
 /// 记录每个「目标 + 渠道 + 版本」README 的内容哈希。
@@ -10,8 +16,6 @@ public sealed record ReadmeIndexEntry(string Sha256, DateTimeOffset CheckedAt);
 /// </summary>
 public sealed class ReadmeStore
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
-
     private readonly string _path;
     private readonly Lock _gate = new();
     private Dictionary<string, ReadmeIndexEntry>? _entries;
@@ -53,8 +57,9 @@ public sealed class ReadmeStore
         {
             if (File.Exists(_path))
             {
-                _entries = JsonSerializer.Deserialize<Dictionary<string, ReadmeIndexEntry>>(
-                    File.ReadAllText(_path), SerializerOptions);
+                _entries = JsonSerializer.Deserialize(
+                    File.ReadAllText(_path),
+                    ReadmeIndexContext.Default.DictionaryStringReadmeIndexEntry);
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
@@ -76,7 +81,9 @@ public sealed class ReadmeStore
             }
 
             var temp = _path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(entries, SerializerOptions));
+            File.WriteAllText(
+                temp,
+                JsonSerializer.Serialize(entries, ReadmeIndexContext.Default.DictionaryStringReadmeIndexEntry));
             File.Move(temp, _path, overwrite: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

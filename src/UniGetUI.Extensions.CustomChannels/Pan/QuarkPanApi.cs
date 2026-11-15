@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using UniGetUI.Extensions.CustomChannels.Infrastructure;
 using Microsoft.Extensions.Logging;
@@ -52,7 +53,7 @@ public sealed partial class QuarkPanApi(
 
         using var document = await PostAsync(
             PanApiEndpoints.Quark.ShareToken,
-            new { pwd_id = pwdId, passcode = pwd ?? string.Empty },
+            new JsonObject { ["pwd_id"] = pwdId, ["passcode"] = pwd ?? string.Empty },
             "夸克网盘分享 token",
             ct).ConfigureAwait(false);
 
@@ -109,19 +110,19 @@ public sealed partial class QuarkPanApi(
         var stoken = await GetStokenAsync(request.ShareId, request.Pwd, ct).ConfigureAwait(false);
         var parentFid = await EnsureFolderAsync(request.TransferPath, ct).ConfigureAwait(false);
 
-        var payload = new
+        var payload = new JsonObject
         {
-            fid_list = new[] { request.FileId },
-            fid_token_list = new[] { request.FileToken ?? string.Empty },
-            to_pdir_fid = parentFid,
-            pwd_id = request.ShareId,
-            stoken,
-            pdir_fid = RootFid,
-            scene = "link",
-            _fetch_banner = 0,
-            _fetch_share = 0,
-            _fetch_total = 1,
-            _sort = "file_type:asc,updated_at:desc",
+            ["fid_list"] = new JsonArray(request.FileId),
+            ["fid_token_list"] = new JsonArray(request.FileToken ?? string.Empty),
+            ["to_pdir_fid"] = parentFid,
+            ["pwd_id"] = request.ShareId,
+            ["stoken"] = stoken,
+            ["pdir_fid"] = RootFid,
+            ["scene"] = "link",
+            ["_fetch_banner"] = 0,
+            ["_fetch_share"] = 0,
+            ["_fetch_total"] = 1,
+            ["_sort"] = "file_type:asc,updated_at:desc",
         };
 
         using var document = await PostAsync(
@@ -151,7 +152,7 @@ public sealed partial class QuarkPanApi(
     {
         using var document = await PostAsync(
             PanApiEndpoints.Quark.FileDownload,
-            new { fids = new[] { fileId } },
+            new JsonObject { ["fids"] = new JsonArray(fileId) },
             "夸克网盘取链",
             ct).ConfigureAwait(false);
 
@@ -172,11 +173,11 @@ public sealed partial class QuarkPanApi(
     {
         using var document = await PostAsync(
             PanApiEndpoints.Quark.FileDelete,
-            new
+            new JsonObject
             {
-                action_type = 2,
-                filelist = new[] { record.FileId },
-                exclude_fids = Array.Empty<string>(),
+                ["action_type"] = 2,
+                ["filelist"] = new JsonArray(record.FileId),
+                ["exclude_fids"] = new JsonArray(),
             },
             "夸克网盘删除转存",
             ct).ConfigureAwait(false);
@@ -209,12 +210,12 @@ public sealed partial class QuarkPanApi(
 
             using var document = await PostAsync(
                 PanApiEndpoints.Quark.FileCreate,
-                new
+                new JsonObject
                 {
-                    pdir_fid = current,
-                    file_name = segment,
-                    dir_path = string.Empty,
-                    dir_init_lock = false,
+                    ["pdir_fid"] = current,
+                    ["file_name"] = segment,
+                    ["dir_path"] = string.Empty,
+                    ["dir_init_lock"] = false,
                 },
                 "夸克网盘创建目录",
                 ct).ConfigureAwait(false);
@@ -305,7 +306,7 @@ public sealed partial class QuarkPanApi(
         return await PanHttp.ReadJsonAsync(response, operation, ct).ConfigureAwait(false);
     }
 
-    private async Task<JsonDocument> PostAsync(string url, object payload, string operation, CancellationToken ct)
+    private async Task<JsonDocument> PostAsync(string url, JsonNode payload, string operation, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Post, url, PanHttp.Json(payload));
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);

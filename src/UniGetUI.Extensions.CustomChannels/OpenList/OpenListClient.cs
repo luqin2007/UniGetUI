@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using UniGetUI.Extensions.CustomChannels.Configuration;
 using UniGetUI.Extensions.CustomChannels.Pan;
 using Microsoft.Extensions.Logging;
@@ -62,7 +63,11 @@ public sealed class OpenListClient(HttpClient http, Func<OpenListConfig> configA
 
         using var document = await PostAsync(
             "/api/auth/login",
-            new { username = Config.Username, password = Config.Password },
+            new JsonObject
+            {
+                ["username"] = Config.Username,
+                ["password"] = Config.Password,
+            },
             "OpenList 登录",
             ct,
             requireAuth: false).ConfigureAwait(false);
@@ -88,15 +93,15 @@ public sealed class OpenListClient(HttpClient http, Func<OpenListConfig> configA
 
         using var document = await PostAsync(
             "/api/fs/list",
-            new
+            new JsonObject
             {
-                path,
-                password = string.Empty,
-                page = 1,
-                per_page = 200,
-                refresh = false,
-                order = "name",
-                order_by = "asc",
+                ["path"] = path,
+                ["password"] = string.Empty,
+                ["page"] = 1,
+                ["per_page"] = 200,
+                ["refresh"] = false,
+                ["order"] = "name",
+                ["order_by"] = "asc",
             },
             "OpenList 列目录",
             ct).ConfigureAwait(false);
@@ -135,7 +140,11 @@ public sealed class OpenListClient(HttpClient http, Func<OpenListConfig> configA
 
         using var document = await PostAsync(
             "/api/fs/get",
-            new { path, password = string.Empty },
+            new JsonObject
+            {
+                ["path"] = path,
+                ["password"] = string.Empty,
+            },
             "OpenList 取文件信息",
             ct).ConfigureAwait(false);
 
@@ -170,7 +179,7 @@ public sealed class OpenListClient(HttpClient http, Func<OpenListConfig> configA
 
     private async Task<JsonDocument> PostAsync(
         string relativePath,
-        object payload,
+        JsonNode payload,
         string operation,
         CancellationToken ct,
         bool requireAuth = true)
