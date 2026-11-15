@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 
 namespace UniGetUI.Extensions.CustomChannels.Pan;
 
-internal static class PanHttp
+public static class PanHttp
 {
     public static HttpRequestMessage Create(
         HttpMethod method,
@@ -65,7 +65,9 @@ internal static class PanHttp
 
     public static void ApplyAccept(HttpRequestMessage request, string accept = "application/json, text/plain, */*")
     {
+        // 默认值是逗号分隔的多值 Accept，无法用 MediaTypeWithQualityHeaderValue 解析为单个值，
+        // 改用不验证模式原样写入，避免 FormatException
         request.Headers.Accept.Clear();
-        request.Headers.Accept.Add(MediaTypeWithQualityHeaderValue.Parse(accept));
+        request.Headers.TryAddWithoutValidation("Accept", accept);
     }
 }
