@@ -106,7 +106,7 @@ public sealed class GitTokenFallbackTests : IDisposable
         var api = CreateQuarkApi(handler);
         await api.ValidateSessionAsync();
 
-        handler.RequestUris.Should().Contain(u => u.Contains("/members?"));
+        handler.RequestUris.Should().Contain(u => u.Contains("/behavior/recent/list?"));
 
         var failing = CreateQuarkApi(new TestHttpHandler().EnqueueJson(
             """{"status":401,"code":32003,"message":"token expired"}"""));

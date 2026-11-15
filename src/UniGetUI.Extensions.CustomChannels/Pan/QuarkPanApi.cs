@@ -313,7 +313,7 @@ public sealed partial class QuarkPanApi(
     /// </summary>
     public async Task ValidateSessionAsync(CancellationToken ct = default)
     {
-        using var request = CreateRequest(HttpMethod.Get, PanApiEndpoints.Quark.Members);
+        using var request = CreateRequest(HttpMethod.Get, PanApiEndpoints.Quark.RecentList);
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
         using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘会话校验", ct).ConfigureAwait(false);
         GetData(document.RootElement, "夸克网盘会话校验");

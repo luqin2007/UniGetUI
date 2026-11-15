@@ -68,7 +68,7 @@ public static class PanApiEndpoints
 
         public static string FileDelete => $"{ApiBase}/file/delete?{CommonQuery}";
 
-        /// <summary>成员信息：登录态校验用的轻量接口。</summary>
-        public static string Members => $"{ApiBase}/members?{CommonQuery}";
+        /// <summary>最近使用列表：登录态校验用的轻量接口（/members 在 drive-pc 上不存在）。</summary>
+        public static string RecentList => $"{ApiBase}/behavior/recent/list?{CommonQuery}&item_size=20";
     }
 }
