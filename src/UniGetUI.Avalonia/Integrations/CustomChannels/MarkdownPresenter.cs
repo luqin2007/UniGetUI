@@ -14,9 +14,51 @@ namespace UniGetUI.Avalonia.Integrations.CustomChannels;
 /// </summary>
 internal static class MarkdownPresenter
 {
+    private static readonly System.Text.RegularExpressions.Regex HtmlTag =
+        new(@"<[^>]+>", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 远端 README 可能是整页 HTML 源码（GitHub raw 版），把成片的 HTML 标签
+    /// 转成换行并剥掉后按纯文本段落渲染，避免界面上出现标签原文。
+    /// </summary>
+    private static string? Sanitize(string? markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            return markdown;
+        }
+
+        int tagCount = 0;
+        foreach (var _ in HtmlTag.Matches(markdown))
+        {
+            tagCount++;
+            if (tagCount > 5)
+            {
+                break;
+            }
+        }
+
+        if (tagCount <= 5)
+        {
+            return markdown;
+        }
+
+        var text = System.Net.WebUtility.HtmlDecode(markdown);
+        text = System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"</?(?:html|body|div|p|br|h[1-6]|li|ul|ol|tr|table|section|header|footer)\b[^>]*>",
+            "\n",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        text = HtmlTag.Replace(text, string.Empty);
+        // 折叠连续空行
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\n{3,}", "\n\n");
+        return text.Trim();
+    }
+
     public static Control Build(string? markdown)
     {
         var panel = new StackPanel { Spacing = 4 };
+        markdown = Sanitize(markdown);
         if (string.IsNullOrWhiteSpace(markdown))
         {
             panel.Children.Add(new TextBlock { Text = "（无内容）", Opacity = 0.6, FontSize = 12 });
