@@ -42,16 +42,7 @@ public sealed class ZipPackageInstaller(ArchiveExtractor extractor, ElevationCli
             context.Logger.LogInformation("压缩包使用密码解压成功。");
         }
 
-        var contentRoot = extractDir;
-        if (!string.IsNullOrWhiteSpace(context.Target.Archive.ExtractSubPath))
-        {
-            contentRoot = ArchiveExtractor.SafeCombine(extractDir, context.Target.Archive.ExtractSubPath);
-            if (!Directory.Exists(contentRoot))
-            {
-                throw new DirectoryNotFoundException(
-                    $"压缩包内不存在子目录：{context.Target.Archive.ExtractSubPath}");
-            }
-        }
+        var contentRoot = ArchiveExtractor.ResolveContentRoot(extractDir, context.Target.Archive);
 
         var appliedDir = Path.Combine(staging, "applied");
         if (Directory.Exists(appliedDir))

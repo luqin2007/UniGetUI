@@ -229,7 +229,10 @@ public sealed class ArchiveConfig
     /// <summary>候选密码列表，按顺序尝试。</summary>
     public List<string> Passwords { get; set; } = new();
 
-    /// <summary>只使用压缩包内该子目录作为安装内容。</summary>
+    /// <summary>解压后处理方式（默认智能解压）。</summary>
+    public ExtractMode ExtractMode { get; set; } = ExtractMode.Smart;
+
+    /// <summary>只使用压缩包内该子目录作为安装内容（解压方式为自定义路径时使用）。</summary>
     public string? ExtractSubPath { get; set; }
 
     /// <summary>覆盖时是否保留目标目录中压缩包未包含的既有文件。</summary>
@@ -237,6 +240,19 @@ public sealed class ArchiveConfig
 
     /// <summary>密码错误时是否允许弹窗让用户输入。</summary>
     public bool PromptForPassword { get; set; } = true;
+}
+
+/// <summary>压缩包解压后处理方式。</summary>
+public enum ExtractMode
+{
+    /// <summary>直接解压：压缩包内容原样作为安装内容。</summary>
+    Direct,
+
+    /// <summary>智能解压（默认）：压缩包只有一个顶层目录时忽略该目录层级，取其内容作为安装内容。</summary>
+    Smart,
+
+    /// <summary>自定义路径：以压缩包内指定子目录（ExtractSubPath）作为安装内容根。</summary>
+    Custom,
 }
 
 public sealed class UpdatePolicyConfig

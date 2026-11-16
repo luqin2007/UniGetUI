@@ -103,6 +103,44 @@ public sealed class ArchiveExtractor
         return new ExtractResult(EnumerateFiles(destinationRoot), true, usedPassword);
     }
 
+    /// <summary>
+    /// 根据解压后处理方式确定安装内容根目录。
+    /// 旧配置兼容：ExtractSubPath 非空时优先按自定义路径处理（当时无 ExtractMode 字段）。
+    /// </summary>
+    public static string ResolveContentRoot(string extractDir, ArchiveConfig archive)
+    {
+        if (archive.ExtractMode == ExtractMode.Direct)
+        {
+            return extractDir;
+        }
+
+        if (!string.IsNullOrWhiteSpace(archive.ExtractSubPath))
+        {
+            var custom = SafeCombine(extractDir, archive.ExtractSubPath);
+            if (!Directory.Exists(custom))
+            {
+                throw new DirectoryNotFoundException($"压缩包内不存在子目录：{archive.ExtractSubPath}");
+            }
+
+            return custom;
+        }
+
+        if (archive.ExtractMode == ExtractMode.Custom)
+        {
+            throw new InvalidDataException(
+                "解压方式为「自定义路径」，但未填写压缩包子目录（ExtractSubPath）。");
+        }
+
+        // 智能解压：压缩包只有一个顶层目录时忽略该层级
+        var top = Directory.GetFileSystemEntries(extractDir);
+        if (top.Length == 1 && Directory.Exists(top[0]))
+        {
+            return top[0];
+        }
+
+        return extractDir;
+    }
+
     /// <summary>判断 zip 是否加密；无法判断时返回 null。</summary>
     private static bool? DetectZipEncryption(string archivePath)
     {

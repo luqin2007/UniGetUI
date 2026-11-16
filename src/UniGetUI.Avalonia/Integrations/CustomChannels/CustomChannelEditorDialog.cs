@@ -32,6 +32,8 @@ internal sealed class CustomChannelEditorDialog : Window
     private readonly ComboBox _versionMode = new();
     private readonly TextBox _versionPath = new();
     private readonly TextBox _archivePasswords = new() { Watermark = "多个密码用英文逗号分隔" };
+    private readonly ComboBox _extractMode = new();
+    private readonly TextBox _extractSubPath = new() { Watermark = @"压缩包内子目录，如 app/win64" };
     private readonly StackPanel _sourcePanel = new() { Spacing = 8 };
     private readonly List<SourceRow> _rows = [];
     private readonly TextBlock _error = new() { Foreground = Brushes.OrangeRed, TextWrapping = TextWrapping.Wrap };
@@ -41,6 +43,8 @@ internal sealed class CustomChannelEditorDialog : Window
     private Control? _targetFileField;
     private Control? _silentField;
     private Control? _passwordsField;
+    private Control? _extractModeField;
+    private Control? _extractSubPathField;
 
     private CustomChannelEditorDialog(
         TargetConfig target,
@@ -60,6 +64,14 @@ internal sealed class CustomChannelEditorDialog : Window
             .Where(k => k != InstallKind.SingleFile)
             .ToArray();
         _versionMode.ItemsSource = Enum.GetValues<LocalVersionMode>();
+        _extractMode.ItemsSource = new[]
+        {
+            "直接解压",
+            "智能解压（单个顶层目录时自动剥离，默认）",
+            "自定义路径（以压缩包内子目录为根）",
+        };
+        _extractMode.SelectedIndex = (int)target.Archive.ExtractMode;
+        _extractMode.SelectionChanged += (_, _) => UpdateFieldVisibility();
         _installKind.SelectedItem = target.Install.Kind == InstallKind.SingleFile
             ? InstallKind.ZipOverwrite
             : target.Install.Kind;
@@ -85,6 +97,7 @@ internal sealed class CustomChannelEditorDialog : Window
         _versionMode.SelectedItem = target.Version.Mode;
         _versionPath.Text = target.Version.Path;
         _archivePasswords.Text = string.Join(",", target.Archive.Passwords);
+        _extractSubPath.Text = target.Archive.ExtractSubPath;
 
         // 一个应用只保留一个渠道：编辑历史多渠道路配置时以第一个为准
         _rows.Add(new SourceRow(target.Sources.FirstOrDefault() ?? new SourceConfig { Type = SourceType.GithubRelease }));
@@ -137,6 +150,8 @@ internal sealed class CustomChannelEditorDialog : Window
 
         _exeField = FieldWithBrowse("可执行文件", _exePath, BrowseExeAsync);
         _passwordsField = Field("压缩包候选密码", _archivePasswords);
+        _extractModeField = Field("解压方式", _extractMode);
+        _extractSubPathField = Field("自定义根目录（压缩包内子目录）", _extractSubPath);
         _targetFileField = Field("目标文件名（单文件模式）", _targetFileName);
         _silentField = Field("静默参数（EXE）", _silentArgs);
 
@@ -157,6 +172,8 @@ internal sealed class CustomChannelEditorDialog : Window
                 FieldWithBrowse("安装目录", _rootPath, BrowseFolderAsync),
                 _exeField,
                 _passwordsField,
+                _extractModeField,
+                _extractSubPathField,
                 _targetFileField,
                 _silentField,
                 _interactive,
@@ -195,6 +212,18 @@ internal sealed class CustomChannelEditorDialog : Window
         {
             // 压缩包候选密码只在解压覆盖模式下有意义
             _passwordsField.IsVisible = kind == InstallKind.ZipOverwrite;
+        }
+
+        if (_extractModeField is not null)
+        {
+            _extractModeField.IsVisible = kind == InstallKind.ZipOverwrite;
+        }
+
+        if (_extractSubPathField is not null)
+        {
+            // 自定义根目录输入框只在「自定义路径」方式下出现
+            _extractSubPathField.IsVisible = kind == InstallKind.ZipOverwrite &&
+                (_extractMode.SelectedItem is string label) && label.StartsWith("自定义路径");
         }
 
         if (_targetFileField is not null)
@@ -480,6 +509,14 @@ internal sealed class CustomChannelEditorDialog : Window
             return;
         }
 
+        if ((InstallKind)(_installKind.SelectedItem ?? InstallKind.ZipOverwrite) == InstallKind.ZipOverwrite &&
+            (ExtractMode)Math.Max(0, _extractMode.SelectedIndex) == ExtractMode.Custom &&
+            string.IsNullOrWhiteSpace(_extractSubPath.Text))
+        {
+            ShowError("解压方式为「自定义路径」时，必须填写压缩包内的子目录。");
+            return;
+        }
+
         var rows = _rows.Select(r => r.ToConfig()).Where(s => s is not null).Select(s => s!).ToList();
         if (rows.Count == 0)
         {
@@ -503,6 +540,11 @@ internal sealed class CustomChannelEditorDialog : Window
         _target.Archive.Passwords = (_archivePasswords.Text ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
+        _target.Archive.ExtractMode = (ExtractMode)Math.Max(0, _extractMode.SelectedIndex);
+        // 非自定义路径方式下清空子目录，避免残留配置干扰
+        _target.Archive.ExtractSubPath = _target.Archive.ExtractMode == ExtractMode.Custom
+            ? NullIfEmpty(_extractSubPath.Text)
+            : null;
         _target.Sources = rows;
 
         Close(_target);
