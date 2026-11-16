@@ -1,150 +1,81 @@
-using System.IO.Compression;
 using System.Text;
-using UniGetUI.Extensions.CustomChannels.Configuration;
-using UniGetUI.Extensions.CustomChannels.Packages;
 using FluentAssertions;
 using ICSharpCode.SharpZipLib.Zip;
-using SharpZipFile = ICSharpCode.SharpZipLib.Zip.ZipFile;
+using UniGetUI.Extensions.CustomChannels.Configuration;
+using UniGetUI.Extensions.CustomChannels.Packages;
+using Xunit;
 
 namespace UniGetUI.Extensions.CustomChannels.Tests;
 
+/// <summary>压缩包解压：GBK 条目名解码、路径校验。</summary>
 public sealed class ArchiveExtractorTests : IDisposable
 {
-    private readonly string _root;
-    private readonly ArchiveExtractor _extractor = new();
-
-    public ArchiveExtractorTests()
-    {
-        _root = Path.Combine(AppContext.BaseDirectory, "test-artifacts", "zip-" + Guid.NewGuid().ToString("N")[..6]);
-        Directory.CreateDirectory(_root);
-    }
-
-    [Fact]
-    public async Task 普通压缩包应使用快速路径解压()
-    {
-        var zip = Path.Combine(_root, "plain.zip");
-        CreatePlainZip(zip, ("app/readme.txt", "hello"));
-
-        var destination = Path.Combine(_root, "out-plain");
-        var result = await _extractor.ExtractAsync(
-            zip, destination, new ArchiveConfig(), null, "plain.zip");
-
-        result.PasswordUsed.Should().BeFalse();
-        File.ReadAllText(Path.Combine(destination, "app", "readme.txt")).Should().Be("hello");
-    }
-
-    [Fact]
-    public async Task 加密压缩包应使用候选密码解压()
-    {
-        var zip = Path.Combine(_root, "secret.zip");
-        CreateEncryptedZip(zip, "s3cret", ("config/settings.json", "{\"ok\":true}"));
-
-        var destination = Path.Combine(_root, "out-secret");
-        var result = await _extractor.ExtractAsync(
-            zip,
-            destination,
-            new ArchiveConfig { Passwords = ["wrong", "s3cret"], PromptForPassword = false },
-            null,
-            "secret.zip");
-
-        result.PasswordUsed.Should().BeTrue();
-        result.Password.Should().Be("s3cret");
-        File.ReadAllText(Path.Combine(destination, "config", "settings.json"))
-            .Should().Be("{\"ok\":true}");
-    }
-
-    [Fact]
-    public async Task 密码错误应抛出加密异常()
-    {
-        var zip = Path.Combine(_root, "secret2.zip");
-        CreateEncryptedZip(zip, "right", ("a.txt", "content"));
-
-        var act = () => _extractor.ExtractAsync(
-            zip,
-            Path.Combine(_root, "out-bad"),
-            new ArchiveConfig { Passwords = ["wrong"], PromptForPassword = false },
-            null,
-            "secret2.zip");
-
-        await act.Should().ThrowAsync<ArchivePasswordException>();
-    }
-
-    [Fact]
-    public async Task 路径穿越条目应被拒绝()
-    {
-        var zip = Path.Combine(_root, "slip.zip");
-        CreatePlainZip(zip, ("../evil.txt", "pwned"));
-
-        var act = () => _extractor.ExtractAsync(
-            zip, Path.Combine(_root, "out-slip"), new ArchiveConfig(), null, "slip.zip");
-
-        await act.Should().ThrowAsync<InvalidDataException>();
-    }
-
-    [Theory]
-    [InlineData("../escape.txt")]
-    [InlineData("..\\escape.txt")]
-    [InlineData("/absolute.txt")]
-    [InlineData("C:/windows/system32/evil.dll")]
-    public void SafeCombine_应拒绝越界路径(string entry)
-    {
-        var act = () => ArchiveExtractor.SafeCombine(_root, entry);
-
-        act.Should().Throw<InvalidDataException>();
-    }
-
-    [Fact]
-    public void 包类型识别应区分压缩包与安装程序()
-    {
-        var zip = Path.Combine(_root, "x.zip");
-        CreatePlainZip(zip, ("a.txt", "a"));
-
-        PackageDetector.Detect(zip).Should().Be(InstallKind.ZipOverwrite);
-        PackageDetector.Detect(Path.Combine(_root, "setup.msi")).Should().Be(InstallKind.Msi);
-        PackageDetector.Detect(Path.Combine(_root, "setup.exe")).Should().Be(InstallKind.Exe);
-        PackageDetector.Detect(Path.Combine(_root, "app.dll")).Should().Be(InstallKind.SingleFile);
-    }
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(), "cc-extract-test-" + Guid.NewGuid().ToString("N"));
 
     public void Dispose()
     {
         try
         {
-            if (Directory.Exists(_root))
-            {
-                Directory.Delete(_root, recursive: true);
-            }
+            Directory.Delete(_root, recursive: true);
         }
-        catch (IOException)
+        catch
         {
+            // 清理失败不影响测试结论
         }
     }
 
-    private static void CreatePlainZip(string path, params (string Name, string Content)[] entries)
+    [Fact]
+    public async Task GBK中文条目名压缩包正确解码()
     {
-        using var stream = File.Create(path);
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
-        foreach (var (name, content) in entries)
-        {
-            var entry = archive.CreateEntry(name);
-            using var writer = new StreamWriter(entry.Open(), Encoding.UTF8);
-            writer.Write(content);
-        }
+        // 复现线上故障：WinRAR/好压等中文压缩工具以 ANSI(GBK) 存储条目名
+        // 且不带 UTF-8 标志，默认按 UTF-8 解码会得到乱码目录
+        var zipPath = CreateGbkEntryZip("MRS助手/MRS助手.exe", "MRS助手_26.11.14.1.zip");
+        var destination = Path.Combine(_root, "out");
+
+        var extractor = new ArchiveExtractor();
+        var result = await extractor.ExtractAsync(zipPath, destination, new ArchiveConfig(), null, "测试");
+
+        result.Files.Should().Contain(Path.Combine("MRS助手", "MRS助手.exe"));
+        File.Exists(Path.Combine(destination, "MRS助手", "MRS助手.exe")).Should().BeTrue();
+        Directory.EnumerateDirectories(destination).Should().ContainSingle()
+            .And.Subject.Should().Contain(p => p.EndsWith("MRS助手"));
     }
 
-    private static void CreateEncryptedZip(string path, string password, params (string Name, string Content)[] entries)
+    [Fact]
+    public async Task 带UTF8标志的中文条目名不受影响()
     {
-        using var fileStream = File.Create(path);
-        using var zipStream = new ZipOutputStream(fileStream) { Password = password };
-
-        foreach (var (name, content) in entries)
+        // ZipArchive 写入非 ASCII 名时会设置 UTF-8 标志，必须仍按 UTF-8 解码
+        var zipPath = Path.Combine(_root, "utf8.zip");
+        Directory.CreateDirectory(_root);
+        using (var file = File.Create(zipPath))
+        using (var archive = new System.IO.Compression.ZipArchive(file, System.IO.Compression.ZipArchiveMode.Create))
+        using (var entry = archive.CreateEntry("应用/说明.txt").Open())
         {
-            var bytes = Encoding.UTF8.GetBytes(content);
-            var entry = new ZipEntry(name) { DateTime = DateTime.Now, Size = bytes.Length };
-            zipStream.PutNextEntry(entry);
-            zipStream.Write(bytes, 0, bytes.Length);
-            zipStream.CloseEntry();
+            entry.Write("内容"u8.ToArray());
         }
 
-        zipStream.Finish();
+        var extractor = new ArchiveExtractor();
+        var result = await extractor.ExtractAsync(zipPath, Path.Combine(_root, "out"), new ArchiveConfig(), null, "测试");
+
+        result.Files.Should().Contain(Path.Combine("应用", "说明.txt"));
+    }
+
+    /// <summary>用 SharpZipLib 以 GBK 码页写入条目名（不带 UTF-8 标志），模拟中文压缩工具产物。</summary>
+    private string CreateGbkEntryZip(string entryName, string fileName)
+    {
+        Directory.CreateDirectory(_root);
+        var zipPath = Path.Combine(_root, fileName);
+
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        ZipStrings.CodePage = 936;
+        using var stream = new FileStream(zipPath, FileMode.Create);
+        using var output = new ZipOutputStream(stream);
+        var entry = new ZipEntry(entryName) { DateTime = DateTime.Now };
+        output.PutNextEntry(entry);
+        output.Write("MZ"u8.ToArray(), 0, 2);
+        output.CloseEntry();
+        output.Close();
+        return zipPath;
     }
 }

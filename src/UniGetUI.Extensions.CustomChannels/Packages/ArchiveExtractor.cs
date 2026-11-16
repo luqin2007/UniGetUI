@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text;
 using UniGetUI.Extensions.CustomChannels.Configuration;
 using ICSharpCode.SharpZipLib.Zip;
 using SharpZipFile = ICSharpCode.SharpZipLib.Zip.ZipFile;
@@ -15,6 +16,14 @@ public sealed record ExtractResult(IReadOnlyList<string> Files, bool PasswordUse
 public sealed class ArchiveExtractor
 {
     private const int MaxPromptAttempts = 3;
+
+    static ArchiveExtractor()
+    {
+        // codepage 936（GBK）在 .NET Core 需注册扩展码页提供程序
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        // SharpZipLib 加密 zip 路径：非 UTF-8 标志条目按 GBK 解码（中文压缩包）
+        ZipStrings.CodePage = 936;
+    }
 
     public async Task<ExtractResult> ExtractAsync(
         string archivePath,
@@ -118,8 +127,13 @@ public sealed class ArchiveExtractor
 
     private static void ExtractPlainZip(string archivePath, string destinationRoot, CancellationToken ct)
     {
+        // 中文压缩包（WinRAR/好压/360 等）常用 ANSI/GBK 存储条目名且不带 UTF-8 标志，
+        // 默认按 UTF-8 解码会出现乱码；检测到替换符时改用 GBK 码页重开。
+        // 显式指定编码不影响带 UTF-8 标志的条目（仍按 UTF-8 解码）。
+        var encoding = DetectEntryEncoding(archivePath);
+
         using var file = File.OpenRead(archivePath);
-        using var archive = new ZipArchive(file, ZipArchiveMode.Read);
+        using var archive = new ZipArchive(file, ZipArchiveMode.Read, leaveOpen: false, entryNameEncoding: encoding);
         foreach (var entry in archive.Entries)
         {
             ct.ThrowIfCancellationRequested();
@@ -134,6 +148,29 @@ public sealed class ArchiveExtractor
             using var input = entry.Open();
             using var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None);
             input.CopyTo(output);
+        }
+    }
+
+    /// <summary>默认解码出现乱码替换符时，判定条目名为 ANSI/GBK 存储。</summary>
+    private static Encoding? DetectEntryEncoding(string archivePath)
+    {
+        try
+        {
+            using var file = File.OpenRead(archivePath);
+            using var archive = new ZipArchive(file, ZipArchiveMode.Read);
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.FullName.Contains('\uFFFD'))
+                {
+                    return Encoding.GetEncoding(936);
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException)
+        {
+            return null;
         }
     }
 
