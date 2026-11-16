@@ -211,7 +211,8 @@ public sealed partial class QuarkPanSource(
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["Referer"] = PanApiEndpoints.Quark.Origin + "/",
-            ["User-Agent"] = PanApiEndpoints.BrowserUserAgent,
+            // CDN 防盗链校验 UA + Referer + Cookie 三件套，UA 必须是夸克 PC 客户端
+            ["User-Agent"] = PanApiEndpoints.Quark.ClientUserAgent,
         };
 
         var cookie = sessions.GetCookie(PanPlatform.Quark);

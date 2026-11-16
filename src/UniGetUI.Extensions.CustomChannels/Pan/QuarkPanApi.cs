@@ -111,6 +111,15 @@ public sealed partial class QuarkPanApi(
         var stoken = await GetStokenAsync(request.ShareId, request.Pwd, ct).ConfigureAwait(false);
         var parentFid = await EnsureFolderAsync(request.TransferPath, ct).ConfigureAwait(false);
 
+        // 目标目录里的同名旧文件（上次取链失败的残留、或清理策略遗漏的）
+        // 会让 ShareSave 报同名冲突：先删旧的再转存。
+        var stale = await FindFileFidAsync(parentFid, request.FileName, ct).ConfigureAwait(false);
+        if (!string.IsNullOrEmpty(stale))
+        {
+            logger.LogInformation("夸克网盘目标目录已有同名文件 {Name}，先删除旧文件", request.FileName);
+            await DeleteByFidAsync(stale, request.FileName, ct).ConfigureAwait(false);
+        }
+
         var payload = new JsonObject
         {
             ["fid_list"] = new JsonArray(request.FileId),
@@ -151,11 +160,18 @@ public sealed partial class QuarkPanApi(
 
     public async Task<string?> GetDownloadUrlAsync(string fileId, CancellationToken ct = default)
     {
-        using var document = await PostAsync(
+        // 夸克对 file/download 接口校验 UA：浏览器 UA 会被判定为非客户端请求，
+        // 大于阈值的文件直接返回 23018「download file size limit」。
+        // 必须带夸克 PC 客户端 UA 才能取得大文件直链。
+        using var request = CreateRequest(
+            HttpMethod.Post,
             PanApiEndpoints.Quark.FileDownload,
-            new JsonObject { ["fids"] = new JsonArray(fileId) },
-            "夸克网盘取链",
-            ct).ConfigureAwait(false);
+            PanHttp.Json(new JsonObject { ["fids"] = new JsonArray(fileId) }));
+        // 替换（而非追加）UA：请求头里混着两个 UA 可能干扰服务端校验
+        request.Headers.UserAgent.Clear();
+        request.Headers.TryAddWithoutValidation("User-Agent", PanApiEndpoints.Quark.ClientUserAgent);
+        using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘取链", ct).ConfigureAwait(false);
 
         if (!document.RootElement.TryGetProperty("data", out var data))
         {
@@ -170,14 +186,18 @@ public sealed partial class QuarkPanApi(
         return GetString(data, "download_url");
     }
 
-    public async Task<bool> DeleteAsync(TransferRecord record, CancellationToken ct = default)
+    public async Task<bool> DeleteAsync(TransferRecord record, CancellationToken ct = default) =>
+        await DeleteByFidAsync(record.FileId, record.FileName, ct).ConfigureAwait(false);
+
+    /// <summary>按 fid 删除账号内的转存文件（转存前清理同名残留）。</summary>
+    private async Task<bool> DeleteByFidAsync(string fid, string fileName, CancellationToken ct)
     {
         using var document = await PostAsync(
             PanApiEndpoints.Quark.FileDelete,
             new JsonObject
             {
                 ["action_type"] = 2,
-                ["filelist"] = new JsonArray(record.FileId),
+                ["filelist"] = new JsonArray(fid),
                 ["exclude_fids"] = new JsonArray(),
             },
             "夸克网盘删除转存",
@@ -190,7 +210,7 @@ public sealed partial class QuarkPanApi(
             return false;
         }
 
-        logger.LogInformation("已删除夸克网盘转存文件：{Name}", record.FileName);
+        logger.LogInformation("已删除夸克网盘转存文件：{Name}", fileName);
         return true;
     }
 
@@ -258,7 +278,7 @@ public sealed partial class QuarkPanApi(
                 continue;
             }
 
-            if (expectDirectory && GetInt(item, "dir") != 1)
+            if (expectDirectory && !IsDirectory(item))
             {
                 continue;
             }

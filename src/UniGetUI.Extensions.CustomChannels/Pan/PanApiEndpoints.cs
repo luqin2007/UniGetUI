@@ -45,6 +45,13 @@ public static class PanApiEndpoints
         public const string ApiBase = "https://drive-pc.quark.cn/1/clouddrive";
         public const string CommonQuery = "pr=ucpro&fr=pc&uc_param_str=";
 
+        /// <summary>
+        /// 夸克 PC 客户端 UA：file/download 接口用它区分客户端与网页请求，
+        /// 非客户端 UA 取大文件直链会返回 23018「download file size limit」。
+        /// </summary>
+        public const string ClientUserAgent =
+            "quark-cloud-drive/2.5.56 Chrome/100.0.4896.160 Electron/18.3.5.12 Safari/537.36 Channel/pckk_other_ch";
+
         public static string ShareToken =>
             $"{ApiBase}/share/sharepage/token?{CommonQuery}";
 
