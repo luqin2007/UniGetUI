@@ -2,6 +2,9 @@ using System.IO.Compression;
 using System.Text;
 using UniGetUI.Extensions.CustomChannels.Configuration;
 using ICSharpCode.SharpZipLib.Zip;
+using SharpCompress.Archives;
+using SharpCompress.Common;
+using SharpCompress.Readers;
 using SharpZipFile = ICSharpCode.SharpZipLib.Zip.ZipFile;
 
 namespace UniGetUI.Extensions.CustomChannels.Packages;
@@ -38,8 +41,9 @@ public sealed class ArchiveExtractor
         var extension = Path.GetExtension(archivePath).ToLowerInvariant();
         if (extension is ".7z" or ".rar" or ".tar" or ".gz" or ".tgz")
         {
-            throw new InvalidDataException(
-                $"暂不支持 {extension} 格式，请使用 zip 压缩包（加密 zip 亦支持）。");
+            return await ExtractGenericArchiveAsync(
+                archivePath, destinationRoot, extension, config, passwordProvider, displayName, ct)
+                .ConfigureAwait(false);
         }
 
         var encrypted = DetectZipEncryption(archivePath);
@@ -139,6 +143,127 @@ public sealed class ArchiveExtractor
         }
 
         return extractDir;
+    }
+
+    /// <summary>
+    /// 通用压缩包（7z/rar/tar/gz，走 SharpCompress）：先无密码尝试，
+    /// 失败（多为加密）后按候选密码与弹窗输入逐个重试。
+    /// </summary>
+    private static async Task<ExtractResult> ExtractGenericArchiveAsync(
+        string archivePath,
+        string destinationRoot,
+        string extension,
+        ArchiveConfig config,
+        IPasswordProvider? passwordProvider,
+        string displayName,
+        CancellationToken ct)
+    {
+        if (TryExtractGenericArchive(archivePath, destinationRoot, null, out var firstError))
+        {
+            return new ExtractResult(EnumerateFiles(destinationRoot), false, null);
+        }
+
+        var candidates = config.Passwords
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct()
+            .ToList();
+
+        string? usedPassword = null;
+        string? lastError = firstError;
+
+        foreach (var candidate in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (TryExtractGenericArchive(archivePath, destinationRoot, candidate, out lastError))
+            {
+                usedPassword = candidate;
+                break;
+            }
+
+            ClearDirectory(destinationRoot);
+        }
+
+        if (usedPassword is null && config.PromptForPassword && passwordProvider is not null)
+        {
+            for (var attempt = 1; attempt <= MaxPromptAttempts; attempt++)
+            {
+                var input = await passwordProvider
+                    .RequestPasswordAsync(new PasswordRequest(displayName, attempt, lastError), ct)
+                    .ConfigureAwait(false);
+
+                if (string.IsNullOrEmpty(input))
+                {
+                    break;
+                }
+
+                if (TryExtractGenericArchive(archivePath, destinationRoot, input, out lastError))
+                {
+                    usedPassword = input;
+                    config.Passwords.Add(input);
+                    break;
+                }
+
+                ClearDirectory(destinationRoot);
+            }
+        }
+
+        if (usedPassword is null)
+        {
+            throw new ArchivePasswordException(
+                $"{extension} 压缩包解压失败（可能加密或文件损坏）：{displayName}" +
+                (string.IsNullOrEmpty(lastError) ? "。" : $"。{lastError}"));
+        }
+
+        return new ExtractResult(EnumerateFiles(destinationRoot), true, usedPassword);
+    }
+
+    private static bool TryExtractGenericArchive(
+        string archivePath,
+        string destinationRoot,
+        string? password,
+        out string? error)
+    {
+        error = null;
+        try
+        {
+            var extension = Path.GetExtension(archivePath).ToLowerInvariant();
+            // rar 无 Unicode 标志的条目名按 GBK 解码（中文压缩工具习惯）；
+            // tar/gz 用 UTF-8（标准工具产物）；7z 条目名恒为 UTF-16 不受影响
+            var encoding = extension == ".rar" ? Encoding.GetEncoding(936) : Encoding.UTF8;
+            var options = new ReaderOptions
+            {
+                Password = password,
+                ArchiveEncoding = new ArchiveEncoding { Default = encoding },
+            };
+
+            // ReaderFactory 自动识别格式并处理 gzip 包裹的 tar（.tar.gz/.tgz）
+            using var stream = File.OpenRead(archivePath);
+            using var reader = ReaderFactory.Open(stream, options);
+            while (reader.MoveToNextEntry())
+            {
+                if (reader.Entry.IsDirectory)
+                {
+                    continue;
+                }
+
+                var target = SafeCombine(destinationRoot, reader.Entry.Key ?? string.Empty);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                using var input = reader.OpenEntryStream();
+                using var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None);
+                input.CopyTo(output);
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is IOException or InvalidDataException or ArgumentException or EndOfStreamException ||
+            ex is SharpCompress.Common.CryptographicException ||
+            ex is SharpCompress.Common.InvalidFormatException ||
+            ex.GetType().Name is "CryptographicException" or "LzmaException")
+        {
+            error = ex.Message;
+            return false;
+        }
     }
 
     /// <summary>判断 zip 是否加密；无法判断时返回 null。</summary>

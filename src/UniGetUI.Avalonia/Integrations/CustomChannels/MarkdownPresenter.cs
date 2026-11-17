@@ -413,35 +413,80 @@ internal static class MarkdownPresenter
 
     private static async Task LoadImageAsync(ContentControl host, string url, string alt, double size)
     {
-        try
+        foreach (var candidate in BuildImageCandidates(url))
         {
-            using var response = await ImageHttp.GetAsync(url).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            var bitmap = new Bitmap(new MemoryStream(bytes));
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            try
             {
-                host.Content = new Image
+                // 每个候选独立限时：raw.githubusercontent 在部分网络下 GET 会长时间挂起
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                using var response = await ImageHttp.GetAsync(candidate, cts.Token).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token).ConfigureAwait(false);
+                var bitmap = new Bitmap(new MemoryStream(bytes));
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    Source = bitmap,
-                    MaxWidth = 560,
-                    Stretch = Stretch.Uniform,
-                };
-            });
+                    host.Content = new Image
+                    {
+                        Source = bitmap,
+                        MaxWidth = 560,
+                        Stretch = Stretch.Uniform,
+                    };
+                });
+                return;
+            }
+            catch
+            {
+                // 超时或失败：换下一个候选源
+            }
         }
-        catch
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            host.Content = new TextBlock
             {
-                host.Content = new TextBlock
-                {
-                    Text = string.IsNullOrWhiteSpace(alt) ? $"图片加载失败：{url}" : $"{alt}（图片加载失败）",
-                    FontSize = Math.Max(11, size - 1),
-                    Opacity = 0.65,
-                    TextWrapping = TextWrapping.Wrap,
-                };
-            });
+                Text = string.IsNullOrWhiteSpace(alt) ? $"图片加载失败：{url}" : $"{alt}（图片加载失败）",
+                FontSize = Math.Max(11, size - 1),
+                Opacity = 0.65,
+                TextWrapping = TextWrapping.Wrap,
+            };
+        });
+    }
+
+    /// <summary>
+    /// 图片候选源：GitHub 图床（raw.githubusercontent）在部分网络下经常超时，
+    /// 失败时自动回退 jsDelivr CDN 镜像（两个节点）。
+    /// </summary>
+    internal static string[] BuildImageCandidates(string url)
+    {
+        var candidates = new List<string> { url };
+        var mirror = TryConvertToJsDelivr(url);
+        if (mirror is not null)
+        {
+            candidates.Add(mirror);
+            candidates.Add(mirror.Replace("cdn.jsdelivr.net", "testingcf.jsdelivr.net"));
         }
+
+        return [.. candidates];
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex GitHubImageRegex =
+        new(
+            @"^https?://(?:raw\.githubusercontent\.com/([^/]+)/([^/]+)/(?:refs/heads/)?|github\.com/([^/]+)/([^/]+)/(?:raw|blob)/)([^/]+)/(.+)$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string? TryConvertToJsDelivr(string url)
+    {
+        var match = GitHubImageRegex.Match(url);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var user = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[3].Value;
+        var repo = match.Groups[2].Success ? match.Groups[2].Value : match.Groups[4].Value;
+        var branch = match.Groups[5].Value;
+        var path = match.Groups[6].Value;
+        return $"https://cdn.jsdelivr.net/gh/{user}/{repo}@{branch}/{path}";
     }
 
     /// <summary>GFM 表格：首行为表头（加粗 + 底色），其余行按列排布。</summary>

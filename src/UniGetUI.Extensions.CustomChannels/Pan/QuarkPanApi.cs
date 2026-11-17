@@ -68,7 +68,35 @@ public sealed partial class QuarkPanApi(
         return stoken;
     }
 
+    /// <summary>
+    /// 列举分享目录：内部管理 stoken（缓存 + 失效自动刷新重试）。
+    /// 夸克服务端的 stoken 会过期，长期运行的应用用缓存的旧 stoken 会得到
+    /// 404「分享的stoken过期」——此时清缓存重新获取并重试一次。
+    /// </summary>
     public async Task<IReadOnlyList<QuarkShareEntry>> ListShareAsync(
+        string pwdId,
+        string? pwd,
+        string pdirFid = "0",
+        CancellationToken ct = default)
+    {
+        var stoken = await GetStokenAsync(pwdId, pwd, ct).ConfigureAwait(false);
+        try
+        {
+            return await ListShareCoreAsync(pwdId, stoken, pdirFid, ct).ConfigureAwait(false);
+        }
+        catch (PanApiException ex) when (IsStokenStale(ex.Message))
+        {
+            logger.LogWarning("夸克分享 stoken 已过期，刷新后重试");
+            _stokens.TryRemove(pwdId, out _);
+            var fresh = await GetStokenAsync(pwdId, pwd, ct).ConfigureAwait(false);
+            return await ListShareCoreAsync(pwdId, fresh, pdirFid, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static bool IsStokenStale(string message) =>
+        message.Contains("stoken", StringComparison.OrdinalIgnoreCase);
+
+    public async Task<IReadOnlyList<QuarkShareEntry>> ListShareCoreAsync(
         string pwdId,
         string stoken,
         string pdirFid = "0",
@@ -108,7 +136,6 @@ public sealed partial class QuarkPanApi(
 
     public async Task<TransferResult> TransferAsync(TransferRequest request, CancellationToken ct = default)
     {
-        var stoken = await GetStokenAsync(request.ShareId, request.Pwd, ct).ConfigureAwait(false);
         var parentFid = await EnsureFolderAsync(request.TransferPath, ct).ConfigureAwait(false);
 
         // 目标目录里的同名旧文件（上次取链失败的残留、或清理策略遗漏的）
@@ -126,7 +153,6 @@ public sealed partial class QuarkPanApi(
             ["fid_token_list"] = new JsonArray(request.FileToken ?? string.Empty),
             ["to_pdir_fid"] = parentFid,
             ["pwd_id"] = request.ShareId,
-            ["stoken"] = stoken,
             ["pdir_fid"] = RootFid,
             ["scene"] = "link",
             ["_fetch_banner"] = 0,
@@ -135,11 +161,7 @@ public sealed partial class QuarkPanApi(
             ["_sort"] = "file_type:asc,updated_at:desc",
         };
 
-        using var document = await PostAsync(
-            PanApiEndpoints.Quark.ShareSave,
-            payload,
-            "夸克网盘转存",
-            ct).ConfigureAwait(false);
+        using var document = await SaveWithFreshStokenAsync(request, payload, ct).ConfigureAwait(false);
 
         var data = GetData(document.RootElement, "夸克网盘转存");
         var taskId = GetString(data, "task_id");
@@ -156,6 +178,26 @@ public sealed partial class QuarkPanApi(
         var ownFid = await FindFileFidAsync(parentFid, request.FileName, ct).ConfigureAwait(false);
         logger.LogInformation("夸克网盘转存完成：{Name} → {Path}", request.FileName, request.TransferPath);
         return new TransferResult(true, ownFid, request.TransferPath, "转存成功");
+    }
+
+    /// <summary>转存请求带新鲜 stoken；遇到过期 stoken 时刷新重试一次。</summary>
+    private async Task<JsonDocument> SaveWithFreshStokenAsync(
+        TransferRequest request, JsonObject payload, CancellationToken ct)
+    {
+        payload["stoken"] = await GetStokenAsync(request.ShareId, request.Pwd, ct).ConfigureAwait(false);
+        try
+        {
+            return await PostAsync(
+                PanApiEndpoints.Quark.ShareSave, payload, "夸克网盘转存", ct).ConfigureAwait(false);
+        }
+        catch (PanApiException ex) when (IsStokenStale(ex.Message))
+        {
+            logger.LogWarning("夸克分享 stoken 已过期，刷新后重试转存");
+            _stokens.TryRemove(request.ShareId, out _);
+            payload["stoken"] = await GetStokenAsync(request.ShareId, request.Pwd, ct).ConfigureAwait(false);
+            return await PostAsync(
+                PanApiEndpoints.Quark.ShareSave, payload, "夸克网盘转存", ct).ConfigureAwait(false);
+        }
     }
 
     public async Task<string?> GetDownloadUrlAsync(string fileId, CancellationToken ct = default)

@@ -47,14 +47,13 @@ public sealed partial class QuarkPanSource(
         _pwdId = pwdId;
         _pwd = string.IsNullOrWhiteSpace(config.Pwd) ? urlPwd : config.Pwd;
 
-        var stoken = await api.GetStokenAsync(pwdId, _pwd, ct).ConfigureAwait(false);
-
         var pattern = ExtractFileNamePattern(config.PathPattern);
         var dirSegments = ExtractDirectorySegments(config.PathPattern);
 
         // pathPattern 可以带目录前缀（如 "MRS助手/*26*/MRS助手_*.zip"），
         // 沿路径逐级按通配符进入分享的子目录；不带目录时保持原行为（根目录匹配）
-        var entries = await api.ListShareAsync(pwdId, stoken, ct: ct).ConfigureAwait(false);
+        // ListShareAsync 内部管理 stoken 缓存并在过期时自动刷新重试
+        var entries = await api.ListShareAsync(pwdId, _pwd, ct: ct).ConfigureAwait(false);
         var currentFid = "0";
         foreach (var segment in dirSegments)
         {
@@ -66,7 +65,7 @@ public sealed partial class QuarkPanSource(
             }
 
             currentFid = next.Fid;
-            entries = await api.ListShareAsync(pwdId, stoken, currentFid, ct: ct).ConfigureAwait(false);
+            entries = await api.ListShareAsync(pwdId, _pwd, currentFid, ct: ct).ConfigureAwait(false);
         }
 
         var matched = entries

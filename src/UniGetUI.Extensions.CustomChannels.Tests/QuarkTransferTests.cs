@@ -71,10 +71,10 @@ public sealed class QuarkTransferTests : IDisposable
     {
         // 上次取链失败留下的同名文件会让 ShareSave 报同名冲突：转存前先删
         var handler = new TestHttpHandler()
-            .EnqueueJson("""{"status":200,"code":0,"data":{"stoken":"st"}}""")                       // 分享 token
             .EnqueueJson("""{"status":200,"code":0,"data":{"list":[{"file_name":"AppUpdater","dir":true,"fid":"dirfid"}]}}""") // 根目录找转存目录
             .EnqueueJson("""{"status":200,"code":0,"data":{"list":[{"file_name":"mrs.zip","dir":false,"fid":"stalefid"}]}}""") // 目录里发现同名残留
             .EnqueueJson("""{"status":200,"code":0,"data":{}}""")                                    // 删除残留
+            .EnqueueJson("""{"status":200,"code":0,"data":{"stoken":"st"}}""")                       // 分享 token
             .EnqueueJson("""{"status":200,"code":0,"data":{"task_id":"t1"}}""")                      // 转存任务
             .EnqueueJson("""{"status":200,"code":0,"data":{"status":2}}""")                          // 任务完成
             .EnqueueJson("""{"status":200,"code":0,"data":{"list":[{"file_name":"mrs.zip","dir":false,"fid":"newfid"}]}}"""); // 找到新文件
