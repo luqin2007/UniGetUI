@@ -160,6 +160,11 @@ dotnet run   --project src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj
   `412 Precondition Failed`。`QuarkPanApi` 因此把每个响应里的 `Set-Cookie` 合并回会话
   （`PanSessionStore.MergeSetCookies`，落盘到 `state/secrets.json`），下载器在收到 412/403 时也会
   重新取链后重试，最多 2 次。
+- 7z 必须走 `ArchiveFactory`（`ReaderFactory` 只认流式格式，遇到 7z 会报「Cannot determine
+  compressed stream type」）；解压失败只有像密码问题时才尝试候选密码或弹密码框，且弹窗统一派发到
+  UI 线程，避免后台线程创建窗口导致的「The calling thread cannot access this object」。
+- 下载前若本地已有大小一致（配置了 SHA256 时还需哈希一致）且没有 `.parts.json` 的包，直接复用，
+  不再访问渠道接口。同名更新包跨发布不重复，因此大小相同即可视为同一份内容。
 - 编辑器只覆盖常用字段（安装方式、路径、版本读取、密码、渠道），`PathMappings`、`TokenEnv`、
   转存覆盖、`ExtractSubPath` 等高级项仍通过 `settings.json` 编辑。
 - 上游 `DownloadOperation` / `PackageOperations` 与 `IPackage` 强耦合，本项目只复用其操作展示层，

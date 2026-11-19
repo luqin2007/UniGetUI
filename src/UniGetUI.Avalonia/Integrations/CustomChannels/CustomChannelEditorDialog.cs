@@ -676,11 +676,12 @@ internal sealed class CustomChannelEditorDialog : Window
         public SourceConfig? ToConfig()
         {
             var type = (SourceType)(_type.SelectedItem ?? SourceType.GithubRelease);
+            // 匹配框里的内容按渠道类型落到不同字段：网盘是「目录内相对路径」，
+            // 不能写进 assetPattern（后者只允许文件名，含 / 会被校验拒绝）
             var config = new SourceConfig
             {
                 Type = type,
                 Enabled = true,
-                AssetPattern = NullIfEmpty(_pattern.Text),
                 IncludePrerelease = _prerelease.IsChecked == true,
                 DisplayName = _original.DisplayName,
             };
@@ -696,6 +697,7 @@ internal sealed class CustomChannelEditorDialog : Window
                     }
 
                     config.Repo = primary;
+                    config.AssetPattern = NullIfEmpty(_pattern.Text);
                     if (secondary.Length > 0)
                     {
                         config.BaseUrl = secondary;
@@ -709,6 +711,7 @@ internal sealed class CustomChannelEditorDialog : Window
                     }
 
                     config.ProjectId = primary;
+                    config.AssetPattern = NullIfEmpty(_pattern.Text);
                     if (secondary.Length > 0)
                     {
                         config.BaseUrl = secondary;

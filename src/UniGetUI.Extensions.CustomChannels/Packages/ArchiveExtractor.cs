@@ -158,9 +158,17 @@ public sealed class ArchiveExtractor
         string displayName,
         CancellationToken ct)
     {
-        if (TryExtractGenericArchive(archivePath, destinationRoot, null, out var firstError))
+        if (TryExtractGenericArchive(archivePath, destinationRoot, null, out var firstError, out var passwordRelated))
         {
             return new ExtractResult(EnumerateFiles(destinationRoot), false, null);
+        }
+
+        if (!passwordRelated)
+        {
+            // 格式不支持、文件损坏等与密码无关的失败：直接报出真实原因，
+            // 不要再尝试候选密码或弹密码框（否则用户只会看到一个错误的密码窗口）
+            throw new InvalidDataException(
+                $"无法解压 {extension} 更新包（{displayName}）：{firstError}");
         }
 
         var candidates = config.Passwords
@@ -174,7 +182,7 @@ public sealed class ArchiveExtractor
         foreach (var candidate in candidates)
         {
             ct.ThrowIfCancellationRequested();
-            if (TryExtractGenericArchive(archivePath, destinationRoot, candidate, out lastError))
+            if (TryExtractGenericArchive(archivePath, destinationRoot, candidate, out lastError, out _))
             {
                 usedPassword = candidate;
                 break;
@@ -196,7 +204,7 @@ public sealed class ArchiveExtractor
                     break;
                 }
 
-                if (TryExtractGenericArchive(archivePath, destinationRoot, input, out lastError))
+                if (TryExtractGenericArchive(archivePath, destinationRoot, input, out lastError, out _))
                 {
                     usedPassword = input;
                     config.Passwords.Add(input);
@@ -221,12 +229,14 @@ public sealed class ArchiveExtractor
         string archivePath,
         string destinationRoot,
         string? password,
-        out string? error)
+        out string? error,
+        out bool passwordRelated)
     {
         error = null;
+        passwordRelated = false;
+        var extension = Path.GetExtension(archivePath).ToLowerInvariant();
         try
         {
-            var extension = Path.GetExtension(archivePath).ToLowerInvariant();
             // rar 无 Unicode 标志的条目名按 GBK 解码（中文压缩工具习惯）；
             // tar/gz 用 UTF-8（标准工具产物）；7z 条目名恒为 UTF-16 不受影响
             var encoding = extension == ".rar" ? Encoding.GetEncoding(936) : Encoding.UTF8;
@@ -235,6 +245,24 @@ public sealed class ArchiveExtractor
                 Password = password,
                 ArchiveEncoding = new ArchiveEncoding { Default = encoding },
             };
+
+            if (extension == ".7z")
+            {
+                // 7z 需要随机访问，ReaderFactory 直接报「Cannot determine compressed stream type」，
+                // 必须走 ArchiveFactory（SevenZipArchive）；加密的 7z 也由它按密码解密
+                using var archive = ArchiveFactory.Open(archivePath, options);
+                foreach (var entry in archive.Entries)
+                {
+                    if (entry.IsDirectory)
+                    {
+                        continue;
+                    }
+
+                    WriteEntry(entry.Key, entry.OpenEntryStream, destinationRoot);
+                }
+
+                return true;
+            }
 
             // ReaderFactory 自动识别格式并处理 gzip 包裹的 tar（.tar.gz/.tgz）
             using var stream = File.OpenRead(archivePath);
@@ -246,11 +274,7 @@ public sealed class ArchiveExtractor
                     continue;
                 }
 
-                var target = SafeCombine(destinationRoot, reader.Entry.Key ?? string.Empty);
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                using var input = reader.OpenEntryStream();
-                using var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None);
-                input.CopyTo(output);
+                WriteEntry(reader.Entry.Key, reader.OpenEntryStream, destinationRoot);
             }
 
             return true;
@@ -262,8 +286,35 @@ public sealed class ArchiveExtractor
             ex.GetType().Name is "CryptographicException" or "LzmaException")
         {
             error = ex.Message;
+            passwordRelated = LooksLikePasswordProblem(ex, extension);
             return false;
         }
+    }
+
+    private static void WriteEntry(string? key, Func<Stream> open, string destinationRoot)
+    {
+        var target = SafeCombine(destinationRoot, key ?? string.Empty);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        using var input = open();
+        using var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None);
+        input.CopyTo(output);
+    }
+
+    /// <summary>失败是否可能由密码引起（加密压缩包）；否则就是格式/损坏，不该弹密码框。</summary>
+    private static bool LooksLikePasswordProblem(Exception ex, string extension)
+    {
+        if (ex.GetType().Name == "CryptographicException" ||
+            ex.Message.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("encrypt", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("crypt", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("密码", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // 7z 头部加密时表现为签名无法解析，仍按密码问题处理
+        return extension == ".7z" && ex is InvalidFormatException &&
+               !ex.Message.Contains("Cannot determine", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>判断 zip 是否加密；无法判断时返回 null。</summary>

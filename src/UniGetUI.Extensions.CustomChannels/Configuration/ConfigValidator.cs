@@ -279,9 +279,19 @@ public static class ConfigValidator
                 break;
         }
 
-        if (!string.IsNullOrWhiteSpace(source.AssetPattern) && source.AssetPattern.IndexOfAny(['/', '\\']) >= 0)
+        if (source.Type is SourceType.GithubRelease or SourceType.GitlabRelease &&
+            !string.IsNullOrWhiteSpace(source.AssetPattern) && source.AssetPattern.IndexOfAny(['/', '\\']) >= 0)
         {
             issues.Add(new ConfigIssue($"{prefix}.assetPattern", "资产匹配只支持文件名通配符，不能包含路径分隔符。", true));
+        }
+
+        if (source.Type is SourceType.BaiduPan or SourceType.QuarkPan &&
+            source.PathPattern?.IndexOfAny(['+', '(', ')', '|', '{', '}']) >= 0)
+        {
+            issues.Add(new ConfigIssue(
+                $"{prefix}.pathPattern",
+                "pathPattern 使用通配符 * ? [abc]，+ ( ) | { } 会被当成普通字符；要同时匹配 _ 与 - 请写 [-_] 或直接写 *。",
+                false));
         }
 
         if (!string.IsNullOrWhiteSpace(source.VersionPattern) && !IsValidRegex(source.VersionPattern))

@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Threading;
 using UniGetUI.Avalonia.Views;
 using UniGetUI.Core.Logging;
 using UniGetUI.Extensions.CustomChannels.Infrastructure;
@@ -38,11 +39,24 @@ internal sealed class AvaloniaShellHost : IShellHost
         }
     }
 
-    public async Task<string?> AskArchivePasswordAsync(
+    public Task<string?> AskArchivePasswordAsync(
         string archiveName,
         int attempt,
         string? lastError,
         CancellationToken ct = default)
+    {
+        // 解压跑在后台线程，窗口必须在 UI 线程上创建；否则 Avalonia 会抛
+        // 「The calling thread cannot access this object because a different thread owns it」，
+        // 整个安装阶段被判定为失败
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            return ShowPasswordDialogAsync(archiveName, attempt, lastError);
+        }
+
+        return Dispatcher.UIThread.InvokeAsync(() => ShowPasswordDialogAsync(archiveName, attempt, lastError));
+    }
+
+    private static async Task<string?> ShowPasswordDialogAsync(string archiveName, int attempt, string? lastError)
     {
         if (MainWindow.Instance is not { } owner)
         {

@@ -77,7 +77,8 @@ public sealed partial class QuarkPanSource(
         if (matched.Count == 0)
         {
             throw new PanApiException(
-                $"夸克网盘分享中没有匹配 '{pattern}' 的文件。请检查 pathPattern（目录部分为相对分享根目录）。");
+                $"夸克网盘分享中没有匹配 '{pattern}' 的文件。请检查 pathPattern（目录部分为相对分享根目录）。" +
+                "通配符支持 * ? 与 [abc]（如 MRS助手[-_]*.zip），不支持正则量词 +。");
         }
 
         var versions = new List<VersionInfo>(matched.Count);

@@ -73,11 +73,27 @@ public sealed class SegmentedDownloader : IDisposable
 
         var planPath = request.DestinationPath + ".parts.json";
         var stopwatch = Stopwatch.StartNew();
+
+        // 上次下好的包还在且内容一致时直接复用：先用请求自带的大小/哈希判断，
+        // 命中就不用再取链，连渠道接口都不必访问
+        if (request.ExpectedSize is not null &&
+            await TryReuseAsync(request, request.ExpectedSize, request.Sha256, progress, ct).ConfigureAwait(false))
+        {
+            return ReusedResult(request, request.Sha256, stopwatch);
+        }
+
         var handle = await request.HandleFactory(ct).ConfigureAwait(false);
 
-        var probe = await ProbeAsync(handle, request, ct).ConfigureAwait(false);
-        var total = probe.TotalLength ?? request.ExpectedSize ?? handle.ExpectedSize;
         var sha256 = request.Sha256 ?? handle.Sha256;
+        var knownSize = request.ExpectedSize ?? handle.ExpectedSize;
+
+        if (await TryReuseAsync(request, knownSize, sha256, progress, ct).ConfigureAwait(false))
+        {
+            return ReusedResult(request, sha256, stopwatch);
+        }
+
+        var probe = await ProbeAsync(handle, request, ct).ConfigureAwait(false);
+        var total = probe.TotalLength ?? knownSize;
 
         if (total is { } expected)
         {
@@ -125,6 +141,57 @@ public sealed class SegmentedDownloader : IDisposable
             stopwatch.Elapsed.TotalSeconds);
 
         return new DownloadResult(request.DestinationPath, finalSize, sha256, stopwatch.Elapsed);
+    }
+
+    private DownloadResult ReusedResult(DownloadRequest request, string? sha256, Stopwatch stopwatch)
+    {
+        var size = new FileInfo(request.DestinationPath).Length;
+        _logger.LogInformation("复用已下载的更新包：{Path}（{Size} 字节）", request.DestinationPath, size);
+        return new DownloadResult(request.DestinationPath, size, sha256, stopwatch.Elapsed);
+    }
+
+    /// <summary>
+    /// 目标文件已存在且与待下载内容一致时直接复用：配置了 SHA256 就比哈希，
+    /// 只有大小时比大小（每次发布的更新包文件名唯一，同名的两份内容不会大小相同）。
+    /// 存在断点文件说明上次没下完，不能当完整文件复用。
+    /// </summary>
+    private static async Task<bool> TryReuseAsync(
+        DownloadRequest request,
+        long? expectedSize,
+        string? sha256,
+        IProgress<StageProgress>? progress,
+        CancellationToken ct)
+    {
+        if (expectedSize is null || !File.Exists(request.DestinationPath))
+        {
+            return false;
+        }
+
+        if (File.Exists(request.DestinationPath + ".parts.json"))
+        {
+            return false;
+        }
+
+        var info = new FileInfo(request.DestinationPath);
+        if (info.Length != expectedSize)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sha256) &&
+            !await HashVerifier.VerifyAsync(request.DestinationPath, sha256, expectedSize, ct).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        progress?.Report(new StageProgress(
+            UpdateStage.Downloading,
+            "已存在相同的更新包，跳过下载",
+            100,
+            info.Length,
+            info.Length,
+            0));
+        return true;
     }
 
     public void Dispose()
