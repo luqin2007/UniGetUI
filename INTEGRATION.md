@@ -148,10 +148,18 @@ dotnet run   --project src/UniGetUI.Avalonia/UniGetUI.Avalonia.csproj
 - fork 的**默认分支已改为 `custom`**：GitHub 只在默认分支上运行 `schedule` 与 `workflow_dispatch`，
   因此定时同步与手动触发都要求 `custom` 为默认分支；`main` 保持上游镜像用途。
 - Actions 已启用，工作流令牌具备写权限（`contents/issues/actions: write`）。
+- 上游的 `Translation Sync` 在 fork 里无法运行：59 个 `translate` 任务需要可用的 Copilot 额度
+  （`copilot-requests`），`merge` 还需要上游的 `DEVOLUTIONSBOT_WRITE_TOKEN`，两者 fork 都没有，
+  因此每次定时运行都整片失败。已用 `gh workflow disable "Translation Sync"` 关闭；如需恢复，
+  `gh workflow enable "Translation Sync"`。翻译文件的更新仍通过合并上游提交获得。
 
 ## 9. 已知限制
 
 - 网盘登录使用「系统浏览器 + 粘贴 Cookie」，不内置 WebView；Cookie 过期需重新登录。
+- 夸克的会话令牌 `__puus` 会随每个接口响应轮换，而直链 CDN 只认最新值：接口仍能成功、下载却返回
+  `412 Precondition Failed`。`QuarkPanApi` 因此把每个响应里的 `Set-Cookie` 合并回会话
+  （`PanSessionStore.MergeSetCookies`，落盘到 `state/secrets.json`），下载器在收到 412/403 时也会
+  重新取链后重试，最多 2 次。
 - 编辑器只覆盖常用字段（安装方式、路径、版本读取、密码、渠道），`PathMappings`、`TokenEnv`、
   转存覆盖、`ExtractSubPath` 等高级项仍通过 `settings.json` 编辑。
 - 上游 `DownloadOperation` / `PackageOperations` 与 `IPackage` 强耦合，本项目只复用其操作展示层，

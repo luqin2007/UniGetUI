@@ -18,17 +18,28 @@ public sealed class SegmentedDownloader : IDisposable
     private const int BufferSize = 128 * 1024;
     private const long MinSegmentSize = 2 * 1024 * 1024;
 
+    /// <summary>下载被拒（链接/会话令牌失效）时重新取链的最大次数。</summary>
+    private const int MaxHandleRefresh = 2;
+
     private readonly HttpClient _http;
     private readonly DownloadConfig _config;
     private readonly ILogger<SegmentedDownloader> _logger;
     private readonly bool _ownsHttpClient;
 
-    public SegmentedDownloader(DownloadConfig config, ILogger<SegmentedDownloader> logger)
+    public SegmentedDownloader(DownloadConfig config, ILogger<SegmentedDownloader> logger, HttpMessageHandler? handler = null)
     {
         _config = config;
         _logger = logger;
 
-        var handler = new SocketsHttpHandler
+        if (handler is not null)
+        {
+            // 单元测试注入：直接用外部 handler，不需要真实网络
+            _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            _ownsHttpClient = true;
+            return;
+        }
+
+        var socketsHandler = new SocketsHttpHandler
         {
             AutomaticDecompression = DecompressionMethods.None,
             AllowAutoRedirect = true,
@@ -39,11 +50,11 @@ public sealed class SegmentedDownloader : IDisposable
         if (!string.IsNullOrWhiteSpace(config.Proxy) &&
             Uri.TryCreate(config.Proxy, UriKind.Absolute, out var proxy))
         {
-            handler.Proxy = new WebProxy(proxy);
-            handler.UseProxy = true;
+            socketsHandler.Proxy = new WebProxy(proxy);
+            socketsHandler.UseProxy = true;
         }
 
-        _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        _http = new HttpClient(socketsHandler) { Timeout = Timeout.InfiniteTimeSpan };
         _ownsHttpClient = true;
     }
 
@@ -185,7 +196,6 @@ public sealed class SegmentedDownloader : IDisposable
     {
         var plan = LoadOrCreatePlan(planPath, request.DestinationPath, total, request.Sha256);
         var currentHandle = handle;
-        var handleExpiry = handle.ExpiresAt;
 
         using var fileHandle = File.OpenHandle(
             request.DestinationPath,
@@ -230,50 +240,49 @@ public sealed class SegmentedDownloader : IDisposable
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    if (handleExpiry is { } expiry && DateTimeOffset.UtcNow >= expiry.AddSeconds(-request.RefreshThresholdSeconds))
+                    var (segmentRequest, response) = await SendWithFreshHandleAsync(
+                        request,
+                        HttpMethod.Get,
+                        currentHandle,
+                        new RangeHeaderValue(segment.Start + segment.Completed, segment.End),
+                        ct,
+                        refreshed => currentHandle = refreshed).ConfigureAwait(false);
+
+                    using (segmentRequest)
+                    using (response)
                     {
-                        currentHandle = await request.HandleFactory(ct).ConfigureAwait(false);
-                        handleExpiry = currentHandle.ExpiresAt;
-                        _logger.LogInformation("下载链接即将过期，已重新取链。");
-                    }
-
-                    var position = segment.Start + segment.Completed;
-                    using var message = CreateRequest(HttpMethod.Get, currentHandle, new RangeHeaderValue(position, segment.End));
-                    using var response = await _http
-                        .SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct)
-                        .ConfigureAwait(false);
-
-                    if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
-                    {
-                        // 已完整下载
-                        counter.Add(segment.Length - segment.Completed);
-                        segment.Completed = segment.Length;
-                        break;
-                    }
-
-                    response.EnsureSuccessStatusCode();
-                    await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-
-                    var buffer = new byte[BufferSize];
-                    int read;
-                    while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
-                    {
-                        var remaining = segment.Length - segment.Completed;
-                        if (read > remaining)
+                        if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
                         {
-                            read = (int)remaining;
-                        }
-
-                        if (read <= 0)
-                        {
+                            // 已完整下载
+                            counter.Add(segment.Length - segment.Completed);
+                            segment.Completed = segment.Length;
                             break;
                         }
 
-                        RandomAccess.Write(fileHandle, buffer.AsSpan(0, read), segment.Start + segment.Completed);
-                        segment.Completed += read;
-                        counter.Add(read);
-                        Report();
-                        await limiter.ThrottleAsync(read, ct).ConfigureAwait(false);
+                        response.EnsureSuccessStatusCode();
+                        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+
+                        var buffer = new byte[BufferSize];
+                        int read;
+                        while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                        {
+                            var remaining = segment.Length - segment.Completed;
+                            if (read > remaining)
+                            {
+                                read = (int)remaining;
+                            }
+
+                            if (read <= 0)
+                            {
+                                break;
+                            }
+
+                            RandomAccess.Write(fileHandle, buffer.AsSpan(0, read), segment.Start + segment.Completed);
+                            segment.Completed += read;
+                            counter.Add(read);
+                            Report();
+                            await limiter.ThrottleAsync(read, ct).ConfigureAwait(false);
+                        }
                     }
 
                     SavePlan(planPath, plan);
@@ -307,57 +316,104 @@ public sealed class SegmentedDownloader : IDisposable
         IProgress<StageProgress>? progress,
         CancellationToken ct)
     {
-        using var message = CreateRequest(HttpMethod.Get, handle, null);
-        using var response = await _http
-            .SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct)
-            .ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        var (message, response) = await SendWithFreshHandleAsync(
+            request, HttpMethod.Get, handle, null, ct, refreshed => handle = refreshed).ConfigureAwait(false);
 
-        var length = total ?? response.Content.Headers.ContentLength;
-        await using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        await using var destination = new FileStream(
-            request.DestinationPath,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read,
-            BufferSize,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-
-        var limiter = new SpeedLimiter(request.MaxBytesPerSecond);
-        var buffer = new byte[BufferSize];
-        var lastReport = 0L;
-        int read;
-
-        while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+        using (message)
+        using (response)
         {
-            await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-            counter.Add(read);
+            response.EnsureSuccessStatusCode();
 
-            var now = Stopwatch.GetTimestamp();
-            if (now - lastReport >= Stopwatch.Frequency / 10)
+            var length = total ?? response.Content.Headers.ContentLength;
+            await using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            await using var destination = new FileStream(
+                request.DestinationPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read,
+                BufferSize,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+            var limiter = new SpeedLimiter(request.MaxBytesPerSecond);
+            var buffer = new byte[BufferSize];
+            var lastReport = 0L;
+            int read;
+
+            while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
             {
-                lastReport = now;
-                progress?.Report(new StageProgress(
-                    UpdateStage.Downloading,
-                    "正在下载更新包…",
-                    counter.Percent(length),
-                    counter.Received,
-                    length,
-                    counter.Speed));
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                counter.Add(read);
+
+                var now = Stopwatch.GetTimestamp();
+                if (now - lastReport >= Stopwatch.Frequency / 10)
+                {
+                    lastReport = now;
+                    progress?.Report(new StageProgress(
+                        UpdateStage.Downloading,
+                        "正在下载更新包…",
+                        counter.Percent(length),
+                        counter.Received,
+                        length,
+                        counter.Speed));
+                }
+
+                await limiter.ThrottleAsync(read, ct).ConfigureAwait(false);
             }
 
-            await limiter.ThrottleAsync(read, ct).ConfigureAwait(false);
+            await destination.FlushAsync(ct).ConfigureAwait(false);
+            progress?.Report(new StageProgress(
+                UpdateStage.Downloading,
+                "下载完成",
+                100,
+                counter.Received,
+                length ?? counter.Received,
+                counter.Speed));
         }
-
-        await destination.FlushAsync(ct).ConfigureAwait(false);
-        progress?.Report(new StageProgress(
-            UpdateStage.Downloading,
-            "下载完成",
-            100,
-            counter.Received,
-            length ?? counter.Received,
-            counter.Speed));
     }
+
+    /// <summary>
+    /// 发送一次下载请求；链接过期或 CDN 判定前置条件不满足（夸克直链的 412
+    /// 就是会话令牌轮换造成的）时重新取链重试，最多 <see cref="MaxHandleRefresh"/> 次。
+    /// </summary>
+    private async Task<(HttpRequestMessage Request, HttpResponseMessage Response)> SendWithFreshHandleAsync(
+        DownloadRequest request,
+        HttpMethod method,
+        DownloadHandle handle,
+        RangeHeaderValue? range,
+        CancellationToken ct,
+        Action<DownloadHandle> onRefreshed)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            if (handle.IsExpired(DateTimeOffset.UtcNow, request.RefreshThresholdSeconds))
+            {
+                handle = await request.HandleFactory(ct).ConfigureAwait(false);
+                onRefreshed(handle);
+                _logger.LogInformation("下载链接即将过期，已重新取链。");
+            }
+
+            var message = CreateRequest(method, handle, range);
+            var response = await _http
+                .SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct)
+                .ConfigureAwait(false);
+
+            if (!IsStaleHandleStatus(response.StatusCode) || attempt >= MaxHandleRefresh)
+            {
+                return (message, response);
+            }
+
+            var status = (int)response.StatusCode;
+            response.Dispose();
+            message.Dispose();
+            _logger.LogWarning("下载请求被拒绝（HTTP {Status}），重新取链后重试", status);
+
+            handle = await request.HandleFactory(ct).ConfigureAwait(false);
+            onRefreshed(handle);
+        }
+    }
+
+    private static bool IsStaleHandleStatus(HttpStatusCode status) =>
+        status is HttpStatusCode.PreconditionFailed or HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized;
 
     private HttpRequestMessage CreateRequest(HttpMethod method, DownloadHandle handle, RangeHeaderValue? range)
     {

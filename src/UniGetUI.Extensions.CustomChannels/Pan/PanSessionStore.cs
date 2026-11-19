@@ -41,6 +41,51 @@ public sealed class PanSessionStore(SecretStore secrets)
         SaveCookie(platform, merged);
     }
 
+    /// <summary>
+    /// 用服务端 Set-Cookie 刷新已保存的 Cookie（同名覆盖），返回是否有变化。
+    /// 夸克的 __puus 会随接口响应轮换：接口请求带旧值仍能成功，但直链 CDN 只认最新的，
+    /// 于是「取链成功、下载 412」。因此每个响应里的新值都要落回会话。
+    /// </summary>
+    public bool MergeSetCookies(string platform, IEnumerable<string> setCookieHeaders)
+    {
+        var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in setCookieHeaders)
+        {
+            // Set-Cookie: name=value; Path=/; Domain=... —— 只取第一段键值
+            var pair = header.Split(';', 2)[0];
+            var index = pair.IndexOf('=');
+            if (index <= 0)
+            {
+                continue;
+            }
+
+            var name = pair[..index].Trim();
+            var value = pair[(index + 1)..].Trim();
+            if (name.Length == 0 || value.Length == 0)
+            {
+                // 删除型 Set-Cookie（空值 / Max-Age=0）不覆盖已有会话
+                continue;
+            }
+
+            updates[name] = value;
+        }
+
+        if (updates.Count == 0)
+        {
+            return false;
+        }
+
+        var current = GetCookie(platform);
+        var merged = CookieParser.Merge(current, updates);
+        if (string.Equals(merged, current, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        secrets.Set(CookieKey(platform), merged);
+        return true;
+    }
+
     public string? GetCookieValue(string platform, string name) =>
         CookieParser.Parse(GetCookie(platform)).TryGetValue(name, out var value) ? value : null;
 

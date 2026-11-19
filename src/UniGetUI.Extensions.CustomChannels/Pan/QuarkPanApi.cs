@@ -106,6 +106,7 @@ public sealed partial class QuarkPanApi(
             HttpMethod.Get,
             PanApiEndpoints.Quark.ShareDetail(pwdId, stoken, pdirFid));
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        CaptureSessionCookies(response);
         using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘目录详情", ct).ConfigureAwait(false);
 
         var data = GetData(document.RootElement, "夸克网盘目录详情");
@@ -213,6 +214,9 @@ public sealed partial class QuarkPanApi(
         request.Headers.UserAgent.Clear();
         request.Headers.TryAddWithoutValidation("User-Agent", PanApiEndpoints.Quark.ClientUserAgent);
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        // 取链响应会带上新的 __puus：直链 CDN 只认这个最新值，必须写回会话，
+        // 否则随后的下载请求用的是旧令牌，CDN 直接返回 412。
+        CaptureSessionCookies(response);
         using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘取链", ct).ConfigureAwait(false);
 
         if (!document.RootElement.TryGetProperty("data", out var data))
@@ -304,6 +308,7 @@ public sealed partial class QuarkPanApi(
     {
         using var request = CreateRequest(HttpMethod.Get, PanApiEndpoints.Quark.FileSort(parentFid));
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        CaptureSessionCookies(response);
         using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘目录浏览", ct).ConfigureAwait(false);
 
         if (!document.RootElement.TryGetProperty("data", out var data) ||
@@ -366,6 +371,7 @@ public sealed partial class QuarkPanApi(
     {
         using var request = CreateRequest(HttpMethod.Get, url);
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        CaptureSessionCookies(response);
         return await PanHttp.ReadJsonAsync(response, operation, ct).ConfigureAwait(false);
     }
 
@@ -377,6 +383,7 @@ public sealed partial class QuarkPanApi(
     {
         using var request = CreateRequest(HttpMethod.Get, PanApiEndpoints.Quark.RecentList);
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        CaptureSessionCookies(response);
         using var document = await PanHttp.ReadJsonAsync(response, "夸克网盘会话校验", ct).ConfigureAwait(false);
         GetData(document.RootElement, "夸克网盘会话校验");
     }
@@ -385,7 +392,33 @@ public sealed partial class QuarkPanApi(
     {
         using var request = CreateRequest(HttpMethod.Post, url, PanHttp.Json(payload));
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        CaptureSessionCookies(response);
         return await PanHttp.ReadJsonAsync(response, operation, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 把响应里的 Set-Cookie 合并回会话。夸克每次接口调用都可能轮换 __puus，
+    /// 而直链 CDN 校验的是最新令牌：不落盘就会出现「接口都正常、下载 412」。
+    /// </summary>
+    private void CaptureSessionCookies(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("Set-Cookie", out var values))
+        {
+            return;
+        }
+
+        try
+        {
+            if (sessions.MergeSetCookies(PanPlatform.Quark, values))
+            {
+                logger.LogDebug("夸克网盘会话 cookie 已随响应刷新");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 会话落盘失败不该让取链整条链路失败，下一次响应还会再带上新的 __puus
+            logger.LogWarning("夸克网盘会话 cookie 保存失败：{Message}", ex.Message);
+        }
     }
 
     private HttpRequestMessage CreateRequest(HttpMethod method, string url, HttpContent? content = null)
