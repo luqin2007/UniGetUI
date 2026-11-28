@@ -112,15 +112,7 @@ public static class ConfigValidator
             }
         }
 
-        if (target.Install.Kind == InstallKind.SingleFile && string.IsNullOrWhiteSpace(target.Install.TargetFileName))
-        {
-            issues.Add(new ConfigIssue(
-                $"{prefix}.install.targetFileName",
-                "单文件安装未指定目标文件名时，将使用下载文件名。",
-                false));
-        }
-
-        if (target.Install.Kind == InstallKind.Exe && target.Install.Interactive && !string.IsNullOrEmpty(target.Install.SilentArgs))
+        if (target.Install.Kind == InstallKind.Msi && target.Install.Interactive && !string.IsNullOrEmpty(target.Install.SilentArgs))
         {
             issues.Add(new ConfigIssue(
                 $"{prefix}.install.silentArgs",
@@ -190,7 +182,7 @@ public static class ConfigValidator
         }
 
         var path = version.Path ?? target.Install.ExePath;
-        if (string.IsNullOrWhiteSpace(path))
+        if (string.IsNullOrWhiteSpace(path) && !InstallKinds.IsPortableSingleFile(target.Install.Kind))
         {
             // 降级为警告：VersionResolver 对缺失路径会记录日志并回退到手动填写的版本记录，
             // 不应让整个配置文件无法加载（曾导致添加应用后界面清空）。
@@ -299,7 +291,8 @@ public static class ConfigValidator
             issues.Add(new ConfigIssue($"{prefix}.versionPattern", "版本提取正则无效。", true));
         }
 
-        if (source.Type is SourceType.BaiduPan or SourceType.QuarkPan && target.Install.Kind == InstallKind.SingleFile &&
+        if (source.Type is SourceType.BaiduPan or SourceType.QuarkPan &&
+            InstallKinds.IsPortableSingleFile(target.Install.Kind) &&
             string.IsNullOrWhiteSpace(source.PathPattern))
         {
             issues.Add(new ConfigIssue($"{prefix}.pathPattern", "网盘渠道建议配置 pathPattern 以便定位正确的更新包。", false));

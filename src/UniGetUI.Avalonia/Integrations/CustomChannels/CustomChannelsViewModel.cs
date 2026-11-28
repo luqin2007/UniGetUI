@@ -419,24 +419,21 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
         PersistAndReload();
     }
 
-    /// <summary>启动应用主程序（要求已在编辑中填写可执行文件）。</summary>
+    /// <summary>
+    /// 启动应用主程序。单文件应用的文件名常带版本号，由 <see cref="ExecutableLocator"/>
+    /// 在安装目录中自动识别，无需在配置中写死。
+    /// </summary>
     public void OpenApp(CustomChannelCardViewModel card)
     {
         try
         {
-            var install = card.Target.Install;
-            if (string.IsNullOrWhiteSpace(install.ExePath))
+            var fullPath = ExecutableLocator.Resolve(card.Target);
+            if (fullPath is null)
             {
-                _shell.Notify("无法打开", "尚未填写可执行文件，请先在「编辑」中配置。", isError: true);
-                return;
-            }
-
-            string fullPath = Path.IsPathRooted(install.ExePath)
-                ? install.ExePath
-                : Path.Combine(install.RootPath ?? string.Empty, install.ExePath);
-            if (!File.Exists(fullPath))
-            {
-                _shell.Notify("无法打开", $"可执行文件不存在：{fullPath}", isError: true);
+                _shell.Notify(
+                    "无法打开",
+                    "未找到可执行文件：请确认安装目录正确，或在「编辑」中填写可执行文件。",
+                    isError: true);
                 return;
             }
 
@@ -469,6 +466,22 @@ internal sealed partial class CustomChannelsViewModel : ViewModelBase, IDisposab
             }
 
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            _shell.Notify("打开失败", ex.Message, isError: true);
+        }
+    }
+
+    /// <summary>在资源管理器中打开下载的安装文件所在目录。</summary>
+    public void OpenDownloadsFolder()
+    {
+        try
+        {
+            var path = _service.Paths.Downloads;
+            Directory.CreateDirectory(path);
+            Process.Start("explorer.exe", path);
         }
         catch (Exception ex)
         {

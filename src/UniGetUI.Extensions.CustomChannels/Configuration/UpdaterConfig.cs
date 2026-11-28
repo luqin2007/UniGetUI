@@ -121,13 +121,15 @@ public enum InstallKind
     /// <summary>zip 解压覆盖安装目录。</summary>
     ZipOverwrite,
 
-    /// <summary>单文件替换。</summary>
+    /// <summary>
+    /// 旧版的单文件替换（与 <see cref="Exe"/> 行为一致，仅为兼容历史配置保留）。
+    /// </summary>
     SingleFile,
 
-    /// <summary>msi 安装程序。</summary>
+    /// <summary>Msi/Exe 安装程序：.msi 走 msiexec，.exe 按静默参数运行。</summary>
     Msi,
 
-    /// <summary>exe 安装程序。</summary>
+    /// <summary>EXE 单文件应用：下载的 exe 即程序本体，复制到安装目录即可运行。</summary>
     Exe,
 }
 
@@ -155,6 +157,12 @@ public sealed class InstallConfig
 
     /// <summary>单文件模式下的目标文件名，相对 RootPath；留空则使用下载文件名。</summary>
     public string? TargetFileName { get; set; }
+
+    /// <summary>单文件应用安装后在桌面创建快捷方式。</summary>
+    public bool CreateDesktopShortcut { get; set; }
+
+    /// <summary>单文件应用安装后在开始菜单创建快捷方式。</summary>
+    public bool CreateStartMenuShortcut { get; set; }
 
     /// <summary>更新完成后启动目标程序。</summary>
     public bool LaunchAfterUpdate { get; set; }

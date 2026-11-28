@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -26,6 +27,8 @@ internal sealed class CustomChannelEditorDialog : Window
     private readonly TextBox _targetFileName = new();
     private readonly TextBox _silentArgs = new();
     private readonly CheckBox _interactive = new() { Content = "安装程序交互运行（不静默）" };
+    private readonly CheckBox _desktopShortcut = new() { Content = "添加桌面快捷方式" };
+    private readonly CheckBox _startMenuShortcut = new() { Content = "添加到开始菜单" };
     private readonly CheckBox _launchAfter = new() { Content = "更新后启动程序" };
     private readonly CheckBox _elevated = new() { Content = "需要管理员权限" };
     private readonly CheckBox _allowDowngrade = new() { Content = "允许安装低于本地的版本" };
@@ -39,6 +42,7 @@ internal sealed class CustomChannelEditorDialog : Window
     private readonly TextBlock _error = new() { Foreground = Brushes.OrangeRed, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _detectStatus = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 };
     private readonly Func<TargetConfig, Task<TargetCheckResult>>? _checkAsync;
+    private readonly InstallKindOption[] _kindOptions;
     private Control? _exeField;
     private Control? _targetFileField;
     private Control? _silentField;
@@ -58,11 +62,13 @@ internal sealed class CustomChannelEditorDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         CanResize = true;
 
-        // 单文件模式已从选项中移除：下载的文件即程序文件且文件名可能变化，无法可靠定位
-        // （历史配置仍保留 SingleFile 枚举值以兼容，编辑保存后统一转为其他方式）
-        _installKind.ItemsSource = Enum.GetValues<InstallKind>()
-            .Where(k => k != InstallKind.SingleFile)
+        // 安装方式：ZIP 解压覆盖、Msi/Exe 安装程序、EXE 单文件应用
+        _kindOptions = InstallKinds.Editable
+            .Select(kind => new InstallKindOption(kind, InstallKinds.Label(kind)))
             .ToArray();
+        _installKind.ItemsSource = _kindOptions;
+        _installKind.ItemTemplate = new FuncDataTemplate<InstallKindOption>(
+            (option, _) => new TextBlock { Text = option.Label });
         _versionMode.ItemsSource = Enum.GetValues<LocalVersionMode>();
         _extractMode.ItemsSource = new[]
         {
@@ -72,25 +78,24 @@ internal sealed class CustomChannelEditorDialog : Window
         };
         _extractMode.SelectedIndex = (int)target.Archive.ExtractMode;
         _extractMode.SelectionChanged += (_, _) => UpdateFieldVisibility();
-        _installKind.SelectedItem = target.Install.Kind == InstallKind.SingleFile
-            ? InstallKind.ZipOverwrite
-            : target.Install.Kind;
         _installKind.SelectionChanged += (_, _) => UpdateFieldVisibility();
 
         _id.Text = target.Id;
         _id.Watermark = "唯一标识；留空时 GitHub/GitLab 渠道自动取仓库名";
         _displayName.Text = target.DisplayName;
         _displayName.Watermark = "显示名称";
-        _installKind.SelectedItem = target.Install.Kind;
+        SelectKind(target.Install.Kind);
         _rootPath.Text = target.Install.RootPath;
         _rootPath.Watermark = @"C:\Apps\MyApp";
         _exePath.Text = target.Install.ExePath;
         _exePath.Watermark = @"MyApp.exe（相对安装目录）";
         _targetFileName.Text = target.Install.TargetFileName;
-        _targetFileName.Watermark = "单文件模式的目标文件名";
+        _targetFileName.Watermark = "留空则使用下载文件名（通常含版本号）";
         _silentArgs.Text = target.Install.SilentArgs;
         _silentArgs.Watermark = "/S 或 /SILENT";
         _interactive.IsChecked = target.Install.Interactive;
+        _desktopShortcut.IsChecked = target.Install.CreateDesktopShortcut;
+        _startMenuShortcut.IsChecked = target.Install.CreateStartMenuShortcut;
         _launchAfter.IsChecked = target.Install.LaunchAfterUpdate;
         _elevated.IsChecked = target.Install.RequiresElevation;
         _allowDowngrade.IsChecked = target.Policy.AllowDowngrade;
@@ -152,8 +157,8 @@ internal sealed class CustomChannelEditorDialog : Window
         _passwordsField = Field("压缩包候选密码", _archivePasswords);
         _extractModeField = Field("解压方式", _extractMode);
         _extractSubPathField = Field("自定义根目录（压缩包内子目录）", _extractSubPath);
-        _targetFileField = Field("目标文件名（单文件模式）", _targetFileName);
-        _silentField = Field("静默参数（EXE）", _silentArgs);
+        _targetFileField = Field("保存为文件名（可选）", _targetFileName);
+        _silentField = Field("静默参数（EXE 安装包）", _silentArgs);
 
         var body = new StackPanel
         {
@@ -175,13 +180,15 @@ internal sealed class CustomChannelEditorDialog : Window
                 _extractModeField,
                 _extractSubPathField,
                 _targetFileField,
+                _desktopShortcut,
+                _startMenuShortcut,
                 _silentField,
                 _interactive,
                 _launchAfter,
                 _elevated,
                 Section("版本与策略"),
                 Field("本地版本读取方式", _versionMode),
-                Field("版本文件路径（可选）", _versionPath),
+                Field("版本来源文件（可选，单文件应用留空自动识别）", _versionPath),
                 _allowDowngrade,
                 _error,
                 new StackPanel
@@ -200,43 +207,59 @@ internal sealed class CustomChannelEditorDialog : Window
     /// <summary>按安装类型隐藏无意义的字段，减少误填。</summary>
     private void UpdateFieldVisibility()
     {
-        var kind = (InstallKind)(_installKind.SelectedItem ?? InstallKind.ZipOverwrite);
+        var kind = SelectedKind;
+        bool portable = InstallKinds.IsPortableSingleFile(kind);
+        bool installer = InstallKinds.IsInstaller(kind);
+        bool archive = kind == InstallKind.ZipOverwrite;
 
         if (_exeField is not null)
         {
-            // 解压覆盖需要定位主程序；MSI/EXE 也需要它供「打开程序」按钮使用
-            _exeField.IsVisible = kind is not InstallKind.SingleFile;
+            // 解压覆盖与安装程序需要定位主程序（打开程序、读取版本）；
+            // 单文件应用的文件名带版本号，由程序自动识别
+            _exeField.IsVisible = !portable;
         }
 
         if (_passwordsField is not null)
         {
             // 压缩包候选密码只在解压覆盖模式下有意义
-            _passwordsField.IsVisible = kind == InstallKind.ZipOverwrite;
+            _passwordsField.IsVisible = archive;
         }
 
         if (_extractModeField is not null)
         {
-            _extractModeField.IsVisible = kind == InstallKind.ZipOverwrite;
+            _extractModeField.IsVisible = archive;
         }
 
         if (_extractSubPathField is not null)
         {
             // 自定义根目录输入框只在「自定义路径」方式下出现
-            _extractSubPathField.IsVisible = kind == InstallKind.ZipOverwrite &&
+            _extractSubPathField.IsVisible = archive &&
                 (_extractMode.SelectedItem is string label) && label.StartsWith("自定义路径");
         }
 
         if (_targetFileField is not null)
         {
-            _targetFileField.IsVisible = kind == InstallKind.SingleFile;
+            _targetFileField.IsVisible = portable;
         }
+
+        _desktopShortcut.IsVisible = portable;
+        _startMenuShortcut.IsVisible = portable;
 
         if (_silentField is not null)
         {
-            _silentField.IsVisible = kind == InstallKind.Exe;
+            _silentField.IsVisible = installer;
         }
 
-        _interactive.IsVisible = kind == InstallKind.Exe;
+        _interactive.IsVisible = installer;
+    }
+
+    private InstallKind SelectedKind =>
+        _installKind.SelectedItem is InstallKindOption option ? option.Kind : InstallKind.ZipOverwrite;
+
+    private void SelectKind(InstallKind kind)
+    {
+        var normalized = InstallKinds.Normalize(kind);
+        _installKind.SelectedItem = _kindOptions.FirstOrDefault(o => o.Kind == normalized) ?? _kindOptions[0];
     }
 
     private void RebuildSourcePanel()
@@ -275,7 +298,7 @@ internal sealed class CustomChannelEditorDialog : Window
                 DisplayName = _displayName.Text?.Trim(),
                 Install = new InstallConfig
                 {
-                    Kind = (InstallKind)(_installKind.SelectedItem ?? InstallKind.ZipOverwrite),
+                    Kind = SelectedKind,
                     RootPath = _rootPath.Text?.Trim() ?? string.Empty,
                 },
                 Version = new LocalVersionConfig { Mode = LocalVersionMode.FileVersion },
@@ -327,7 +350,7 @@ internal sealed class CustomChannelEditorDialog : Window
             _displayName.Text = rawName;
         }
 
-        _installKind.SelectedItem = detection.Kind;
+        SelectKind(detection.Kind);
         if (!string.IsNullOrWhiteSpace(detection.TargetFileName))
         {
             _targetFileName.Text = detection.TargetFileName;
@@ -338,9 +361,13 @@ internal sealed class CustomChannelEditorDialog : Window
             _exePath.Text = detection.ExePath;
         }
 
-        // 版本策略默认从文件读取；单文件模式直接指向识别到的可执行文件
+        // 版本策略默认从文件读取；单文件应用留空即可，运行时自动定位安装目录中的 exe
         _versionMode.SelectedItem = LocalVersionMode.FileVersion;
-        if (detection.Kind == InstallKind.SingleFile && !string.IsNullOrWhiteSpace(detection.ExePath))
+        if (InstallKinds.IsPortableSingleFile(detection.Kind))
+        {
+            _versionPath.Text = string.Empty;
+        }
+        else if (!string.IsNullOrWhiteSpace(detection.ExePath))
         {
             _versionPath.Text = detection.ExePath;
         }
@@ -367,7 +394,11 @@ internal sealed class CustomChannelEditorDialog : Window
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { Length: > 0 } path)
         {
             _rootPath.Text = path;
-            AutoFillExecutable(path);
+            // 单文件应用的文件名带版本号且字段隐藏，不自动填充
+            if (!InstallKinds.IsPortableSingleFile(SelectedKind))
+            {
+                AutoFillExecutable(path);
+            }
         }
     }
 
@@ -509,7 +540,7 @@ internal sealed class CustomChannelEditorDialog : Window
             return;
         }
 
-        if ((InstallKind)(_installKind.SelectedItem ?? InstallKind.ZipOverwrite) == InstallKind.ZipOverwrite &&
+        if (SelectedKind == InstallKind.ZipOverwrite &&
             (ExtractMode)Math.Max(0, _extractMode.SelectedIndex) == ExtractMode.Custom &&
             string.IsNullOrWhiteSpace(_extractSubPath.Text))
         {
@@ -524,12 +555,20 @@ internal sealed class CustomChannelEditorDialog : Window
             return;
         }
 
+        // 切换安装方式后，安装程序模式遗留的可执行文件名不应带到单文件应用
+        bool wasPortable = InstallKinds.IsPortableSingleFile(_target.Install.Kind);
+        var kind = SelectedKind;
+
         _target.Id = id;
         _target.DisplayName = string.IsNullOrWhiteSpace(_displayName.Text) ? id : _displayName.Text.Trim();
-        _target.Install.Kind = (InstallKind)(_installKind.SelectedItem ?? InstallKind.ZipOverwrite);
+        _target.Install.Kind = kind;
         _target.Install.RootPath = root;
-        _target.Install.ExePath = NullIfEmpty(_exePath.Text);
+        _target.Install.ExePath = InstallKinds.IsPortableSingleFile(kind) && !wasPortable
+            ? null
+            : NullIfEmpty(_exePath.Text);
         _target.Install.TargetFileName = NullIfEmpty(_targetFileName.Text);
+        _target.Install.CreateDesktopShortcut = _desktopShortcut.IsChecked == true;
+        _target.Install.CreateStartMenuShortcut = _startMenuShortcut.IsChecked == true;
         _target.Install.SilentArgs = NullIfEmpty(_silentArgs.Text);
         _target.Install.Interactive = _interactive.IsChecked == true;
         _target.Install.LaunchAfterUpdate = _launchAfter.IsChecked == true;
@@ -604,6 +643,12 @@ internal sealed class CustomChannelEditorDialog : Window
                 row,
             },
         };
+    }
+
+    /// <summary>安装类型下拉项：显示中文名称，选中值仍是枚举。</summary>
+    private sealed record InstallKindOption(InstallKind Kind, string Label)
+    {
+        public override string ToString() => Label;
     }
 
     /// <summary>一行渠道编辑：类型 + 主参数 + 资产匹配 + 可选口令/密码。</summary>

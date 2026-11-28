@@ -4,12 +4,22 @@ using UniGetUI.Extensions.CustomChannels.Models;
 
 namespace UniGetUI.Extensions.CustomChannels.Packages;
 
-/// <summary>msi 静默安装：msiexec /i /qn /norestart，日志写入程序目录 logs。</summary>
+/// <summary>
+/// Msi/Exe 安装程序：.msi 走 msiexec 静默安装，.exe 交给 <see cref="ExeSetupInstaller"/>
+/// 按静默参数运行。两者共用同一个安装方式，避免用户为 exe 安装包另建类型。
+/// </summary>
 public sealed class MsiInstaller(ElevationClient elevation) : IPackageInstaller
 {
+    private readonly ExeSetupInstaller _exe = new(elevation);
+
     public InstallKind Kind => InstallKind.Msi;
 
-    public async Task<InstallResult> InstallAsync(InstallContext context, CancellationToken ct = default)
+    public Task<InstallResult> InstallAsync(InstallContext context, CancellationToken ct = default) =>
+        Path.GetExtension(context.PackagePath).Equals(".exe", StringComparison.OrdinalIgnoreCase)
+            ? _exe.InstallAsync(context, ct)
+            : InstallMsiAsync(context, ct);
+
+    private async Task<InstallResult> InstallMsiAsync(InstallContext context, CancellationToken ct)
     {
         var logPath = Path.Combine(
             context.Paths.Logs,

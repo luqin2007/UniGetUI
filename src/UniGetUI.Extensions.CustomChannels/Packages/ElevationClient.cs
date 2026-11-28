@@ -189,7 +189,7 @@ public static class ElevatedApplier
             }
 
             status.Steps.Add(stepStatus);
-            if (!stepStatus.Success)
+            if (!stepStatus.Success && !step.Optional)
             {
                 status.Success = false;
                 status.Message = $"步骤「{step.Name}」失败：{stepStatus.Message}";

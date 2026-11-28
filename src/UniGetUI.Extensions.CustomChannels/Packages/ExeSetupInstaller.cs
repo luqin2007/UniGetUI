@@ -4,10 +4,12 @@ using UniGetUI.Extensions.CustomChannels.Models;
 
 namespace UniGetUI.Extensions.CustomChannels.Packages;
 
-/// <summary>exe 安装程序：支持静默参数（默认 /S）与交互运行，必要时提权。</summary>
-public sealed class ExeInstaller(ElevationClient elevation) : IPackageInstaller
+/// <summary>
+/// EXE 安装程序（Msi/Exe 安装程序中的 exe 分支）：支持静默参数（默认 /S）与交互运行，必要时提权。
+/// </summary>
+public sealed class ExeSetupInstaller(ElevationClient elevation) : IPackageInstaller
 {
-    public InstallKind Kind => InstallKind.Exe;
+    public InstallKind Kind => InstallKind.Msi;
 
     public async Task<InstallResult> InstallAsync(InstallContext context, CancellationToken ct = default)
     {

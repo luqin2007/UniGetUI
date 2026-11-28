@@ -51,13 +51,13 @@
       ]
     },
     {
-      // GitLab（可自建实例）+ 单文件替换
+      // GitLab（可自建实例）+ zip 解压覆盖
       "id": "gitlab-cli",
       "displayName": "GitLab CLI",
       "install": {
-        "kind": "SingleFile",
+        "kind": "ZipOverwrite",
         "rootPath": "C:\\Tools\\glab",
-        "targetFileName": "glab.exe",
+        "exePath": "glab.exe",
         "launchAfterUpdate": false
       },
       "version": { "mode": "Command", "command": "glab --version" },
@@ -91,11 +91,32 @@
       ]
     },
     {
-      // 夸克网盘分享
+      // EXE 单文件应用：下载的 exe 就是程序本体，文件名常带版本号
+      // （如 App-v1.2.3.exe），无需填写可执行文件名，安装后自动识别
+      "id": "single-file-app",
+      "displayName": "单文件应用",
+      "install": {
+        "kind": "Exe",
+        "rootPath": "C:\\Apps\\SingleFileApp",
+        "createDesktopShortcut": true,
+        "createStartMenuShortcut": true
+      },
+      "version": { "mode": "FileVersion" },
+      "sources": [
+        {
+          "type": "GithubRelease",
+          "repo": "owner/single-file-app",
+          "assetPattern": "App-*.exe",
+          "includePrerelease": false
+        }
+      ]
+    },
+    {
+      // 夸克网盘分享 + exe 安装程序（与 msi 同属「Msi/Exe 安装程序」）
       "id": "quark-app",
       "displayName": "夸克网盘应用",
       "install": {
-        "kind": "Exe",
+        "kind": "Msi",
         "rootPath": "C:\\Apps\\QuarkApp",
         "silentArgs": "/S",
         "interactive": false
@@ -131,7 +152,7 @@
       "id": "direct-app",
       "displayName": "直链应用",
       "install": {
-        "kind": "Exe",
+        "kind": "Msi",
         "rootPath": "C:\\Apps\\DirectApp",
         "silentArgs": "/S"
       },

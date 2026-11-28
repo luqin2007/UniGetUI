@@ -1,4 +1,5 @@
 using UniGetUI.Extensions.CustomChannels.Configuration;
+using UniGetUI.Extensions.CustomChannels.Packages;
 
 namespace UniGetUI.Extensions.CustomChannels.Detection;
 
@@ -13,10 +14,9 @@ public sealed record InstallDetection(
 /// 从资产名或下载链接推断安装方式。纯函数实现，便于单测与复用（编辑器「识别」按钮）。
 /// 规则：
 ///  * 忽略源码包、符号文件、校验文件；
-///  * msi/msix 优先按安装程序处理；
-///  * 含 setup/installer 的 exe 视为安装程序；
+///  * msi/msix 以及含 setup/installer 的 exe 归入「Msi/Exe 安装程序」；
 ///  * 存在压缩包时按解压覆盖处理（含 portable 标记的优先）；
-///  * 只有一个 exe 且没有压缩包时按单文件替换处理。
+///  * 只有一个 exe 且不带安装程序字样时，按「EXE 单文件应用」处理。
 /// </summary>
 public static class InstallDetector
 {
@@ -44,10 +44,10 @@ public static class InstallDetector
         var exes = names.Where(n => Extension(n) == ".exe").ToList();
         var archives = names.Where(n => ArchiveExtensions.Contains(Extension(n))).ToList();
 
-        string? setup = exes.FirstOrDefault(n => ContainsAny(n, "setup", "installer", "install", "_x64"));
+        string? setup = exes.FirstOrDefault(n => PackageDetector.LooksLikeExeInstaller(n));
         if (setup is not null)
         {
-            return new InstallDetection(InstallKind.Exe, null, null, $"识别到 EXE 安装程序 {setup}");
+            return new InstallDetection(InstallKind.Msi, null, null, $"识别到 EXE 安装程序 {setup}");
         }
 
         if (archives.Count > 0 && exes.Count == 0)
@@ -61,7 +61,7 @@ public static class InstallDetector
         {
             // 同时提供 EXE 与独立压缩包时，EXE 视为安装程序（压缩包通常是便携版）
             return new InstallDetection(
-                InstallKind.Exe,
+                InstallKind.Msi,
                 null,
                 null,
                 $"识别到安装程序 {exes[0]}（同时提供压缩包 {archives[0]}）");
@@ -69,16 +69,17 @@ public static class InstallDetector
 
         if (exes.Count == 1)
         {
+            // 单文件应用的文件名可能带版本号，因此不写死目标文件名与可执行文件名
             return new InstallDetection(
-                InstallKind.SingleFile,
-                exes[0],
-                exes[0],
-                $"仅有单个可执行文件 {exes[0]}，按单文件替换处理");
+                InstallKind.Exe,
+                null,
+                null,
+                $"仅有单个可执行文件 {exes[0]}，按 EXE 单文件应用处理");
         }
 
         if (exes.Count > 1)
         {
-            return new InstallDetection(InstallKind.Exe, null, null, $"识别到 {exes.Count} 个可执行文件，按 EXE 安装处理");
+            return new InstallDetection(InstallKind.Msi, null, null, $"识别到 {exes.Count} 个可执行文件，按 Msi/Exe 安装程序处理");
         }
 
         return new InstallDetection(InstallKind.ZipOverwrite, null, null, "未识别到明确的安装包，默认按压缩包解压覆盖处理");
@@ -96,8 +97,10 @@ public static class InstallDetector
         {
             ".msi" or ".msix" or ".msixbundle" =>
                 new InstallDetection(InstallKind.Msi, null, null, $"识别到安装包 {name}"),
+            ".exe" when PackageDetector.LooksLikeExeInstaller(name) =>
+                new InstallDetection(InstallKind.Msi, null, null, $"识别到 EXE 安装程序 {name}"),
             ".exe" =>
-                new InstallDetection(InstallKind.Exe, null, null, $"识别到 EXE 安装程序 {name}"),
+                new InstallDetection(InstallKind.Exe, null, null, $"识别到单文件应用 {name}"),
             var ext when ArchiveExtensions.Contains(ext) =>
                 new InstallDetection(InstallKind.ZipOverwrite, null, null, $"识别到压缩包 {name}"),
             _ => new InstallDetection(InstallKind.ZipOverwrite, null, null, $"未识别的文件类型 {name}，按压缩包解压覆盖处理"),

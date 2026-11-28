@@ -17,10 +17,10 @@ public sealed class SampleConfigTests
         result.Config.Targets.Should().NotBeEmpty();
         result.Config.Targets.Select(t => t.Id).Should().OnlyHaveUniqueItems();
 
-        // 示例需要覆盖四类安装方式与全部渠道类型
+        // 示例需要覆盖三类安装方式与全部渠道类型
         result.Config.Targets.Select(t => t.Install.Kind).Distinct()
             .Should().BeEquivalentTo(
-                [InstallKind.ZipOverwrite, InstallKind.SingleFile, InstallKind.Msi, InstallKind.Exe]);
+                [InstallKind.ZipOverwrite, InstallKind.Msi, InstallKind.Exe]);
 
         result.Config.Targets.SelectMany(t => t.Sources).Select(s => s.Type).Distinct()
             .Should().BeEquivalentTo(

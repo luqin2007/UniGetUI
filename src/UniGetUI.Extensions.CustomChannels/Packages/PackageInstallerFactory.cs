@@ -11,14 +11,19 @@ public sealed class PackageInstallerFactory : IPackageInstallerFactory
 {
     private readonly Dictionary<InstallKind, IPackageInstaller> _installers;
 
-    public PackageInstallerFactory(ArchiveExtractor extractor, ElevationClient elevation)
+    public PackageInstallerFactory(
+        ArchiveExtractor extractor,
+        ElevationClient elevation,
+        InstalledFileStore installedFiles)
     {
+        var singleFile = new SingleFileInstaller(elevation, installedFiles);
         _installers = new Dictionary<InstallKind, IPackageInstaller>
         {
             [InstallKind.ZipOverwrite] = new ZipPackageInstaller(extractor, elevation),
-            [InstallKind.SingleFile] = new SingleFileInstaller(elevation),
+            // 历史配置里的 SingleFile 与单文件应用行为一致
+            [InstallKind.SingleFile] = singleFile,
             [InstallKind.Msi] = new MsiInstaller(elevation),
-            [InstallKind.Exe] = new ExeInstaller(elevation),
+            [InstallKind.Exe] = singleFile,
         };
     }
 

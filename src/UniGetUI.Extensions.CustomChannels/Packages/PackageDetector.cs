@@ -8,6 +8,9 @@ public static class PackageDetector
     private static readonly string[] ArchiveExtensions = [".zip", ".7z", ".rar", ".tar", ".gz", ".tgz"];
     private static readonly string[] InstallerExtensions = [".msi", ".msix", ".msp"];
 
+    /// <summary>文件名中出现这些词时视为 exe 安装程序，而非单文件应用本体。</summary>
+    private static readonly string[] InstallerTokens = ["setup", "installer", "install"];
+
     public static InstallKind Detect(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
@@ -30,27 +33,55 @@ public static class PackageDetector
         return InstallKind.SingleFile;
     }
 
-    /// <summary>配置声明的安装方式与包实际类型是否冲突。</summary>
-    public static string? Validate(InstallKind configured, InstallKind detected)
+    /// <summary>配置声明的安装方式与包实际类型是否冲突；返回 null 表示兼容。</summary>
+    public static string? Validate(InstallKind configured, InstallKind detected, string? fileName = null)
     {
-        if (configured == detected)
+        var mode = InstallKinds.Normalize(configured);
+
+        if (mode == detected)
+        {
+            if (mode == InstallKind.Exe && LooksLikeExeInstaller(fileName))
+            {
+                return "下载的 exe 名称包含安装程序字样（setup/installer），但它被配置为「EXE 单文件应用」。"
+                       + "如果它需要安装，请把安装方式改为「Msi/Exe 安装程序」。";
+            }
+
+            return null;
+        }
+
+        // Msi/Exe 安装程序同时接受 msi 与 exe 安装包
+        if (mode == InstallKind.Msi && detected is InstallKind.Exe or InstallKind.SingleFile)
         {
             return null;
         }
 
-        if (configured == InstallKind.ZipOverwrite && detected == InstallKind.ZipOverwrite)
+        // 单文件应用也接受无法识别的文件类型（直接复制）
+        if (mode == InstallKind.Exe && detected == InstallKind.SingleFile)
         {
             return null;
         }
 
-        return configured switch
+        return mode switch
         {
-            InstallKind.Msi => "配置为 msi 安装，但下载的更新包不是 msi 文件。",
-            InstallKind.Exe => "配置为 exe 安装程序，但下载的更新包不是 exe 文件。",
-            InstallKind.SingleFile => "配置为单文件替换，但下载的更新包是压缩包或安装程序。",
-            InstallKind.ZipOverwrite => "配置为压缩包覆盖，但下载的更新包不是压缩包。",
+            InstallKind.Msi => "配置为「Msi/Exe 安装程序」，但下载的更新包不是 msi 或 exe 安装包。",
+            InstallKind.Exe => detected == InstallKind.Msi
+                ? "配置为「EXE 单文件应用」，但下载的更新包是 msi 安装包；请把安装方式改为「Msi/Exe 安装程序」。"
+                : "配置为「EXE 单文件应用」，但下载的更新包是压缩包；请把安装方式改为「ZIP 解压覆盖」。",
+            InstallKind.ZipOverwrite => "配置为「ZIP 解压覆盖」，但下载的更新包不是压缩包。",
             _ => null,
         };
+    }
+
+    /// <summary>文件名是否像 exe 安装程序（而不是程序本体）。</summary>
+    public static bool LooksLikeExeInstaller(string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        var name = Path.GetFileNameWithoutExtension(fileName).ToLowerInvariant();
+        return InstallerTokens.Any(name.Contains);
     }
 
     public static bool IsArchive(string filePath) =>

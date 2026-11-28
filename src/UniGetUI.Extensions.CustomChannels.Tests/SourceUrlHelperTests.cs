@@ -61,7 +61,7 @@ public sealed class SourceUrlHelperTests
         };
 
         // 优先 x64，且同架构下取第一个命中项（Setup 版在 arm64 之后）
-        AssetPatternSuggester.Suggest(assets, InstallKind.Exe)
+        AssetPatternSuggester.Suggest(assets, InstallKind.Msi)
             .Should().Be("ExHyperV_V*_Setup_x64.exe");
 
         // 没有 zip 时回落到全部资产，仍优先 x64

@@ -7,7 +7,7 @@ namespace UniGetUI.Extensions.CustomChannels.Tests;
 public sealed class InstallDetectorTests
 {
     [Fact]
-    public void MSI资产应识别为安装包()
+    public void MSI资产应识别为安装程序()
     {
         var result = InstallDetector.FromAssetNames(["App-1.2.3-x64.msi", "App-1.2.3-x64.zip"]);
 
@@ -19,17 +19,18 @@ public sealed class InstallDetectorTests
     {
         var result = InstallDetector.FromAssetNames(["App-Setup-1.2.3.exe", "App-win64.zip"]);
 
-        result.Kind.Should().Be(InstallKind.Exe);
+        result.Kind.Should().Be(InstallKind.Msi);
     }
 
     [Fact]
-    public void 仅有单个EXE时应识别为单文件替换()
+    public void 仅有单个EXE时应识别为单文件应用()
     {
-        var result = InstallDetector.FromAssetNames(["App.exe"]);
+        var result = InstallDetector.FromAssetNames(["神金版[电脑版]v1.4.0.exe"]);
 
-        result.Kind.Should().Be(InstallKind.SingleFile);
-        result.TargetFileName.Should().Be("App.exe");
-        result.ExePath.Should().Be("App.exe");
+        result.Kind.Should().Be(InstallKind.Exe);
+        // 文件名含版本号，不能写死目标文件名或可执行文件名
+        result.TargetFileName.Should().BeNull();
+        result.ExePath.Should().BeNull();
     }
 
     [Fact]
@@ -37,7 +38,7 @@ public sealed class InstallDetectorTests
     {
         var result = InstallDetector.FromAssetNames(["App.exe", "App-portable-win64.zip"]);
 
-        result.Kind.Should().Be(InstallKind.Exe);
+        result.Kind.Should().Be(InstallKind.Msi);
     }
 
     [Fact]
@@ -60,7 +61,8 @@ public sealed class InstallDetectorTests
 
     [Theory]
     [InlineData("https://example.com/download/App-1.0.0.zip", InstallKind.ZipOverwrite)]
-    [InlineData("https://example.com/download/App-Setup.exe", InstallKind.Exe)]
+    [InlineData("https://example.com/download/App-Setup.exe", InstallKind.Msi)]
+    [InlineData("https://example.com/download/App-v1.4.0.exe", InstallKind.Exe)]
     [InlineData("https://example.com/download/App.msi", InstallKind.Msi)]
     public void 直链应按扩展名识别(string url, InstallKind expected)
     {

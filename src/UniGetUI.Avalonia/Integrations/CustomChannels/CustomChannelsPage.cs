@@ -91,7 +91,7 @@ internal sealed class CustomChannelsPage : UserControl
     {
         var toolbar = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"),
+            ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto"),
             ColumnSpacing = 8,
             Margin = new Thickness(0, 0, 0, 8),
         };
@@ -99,13 +99,16 @@ internal sealed class CustomChannelsPage : UserControl
         var checkAll = MakeAsyncButton("检查全部", async () => await _viewModel.CheckAllAsync(forceRefresh: true));
         var add = MakeAsyncButton("添加应用", async () =>
             await _viewModel.AddTargetAsync(TopLevel.GetTopLevel(this) as Window));
+        var openDownloads = MakeButton("打开目录", () => _viewModel.OpenDownloadsFolder());
 
         Grid.SetColumn(checkAll, 0);
         Grid.SetColumn(add, 1);
-        Grid.SetColumn(_statusText, 2);
-        Grid.SetColumn(_configError, 3);
+        Grid.SetColumn(openDownloads, 2);
+        Grid.SetColumn(_statusText, 3);
+        Grid.SetColumn(_configError, 4);
         toolbar.Children.Add(checkAll);
         toolbar.Children.Add(add);
+        toolbar.Children.Add(openDownloads);
         toolbar.Children.Add(_statusText);
         toolbar.Children.Add(_configError);
 

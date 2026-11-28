@@ -24,5 +24,6 @@ namespace UniGetUI.Extensions.CustomChannels.Infrastructure;
 [JsonSerializable(typeof(TransferLedgerDocument))]
 [JsonSerializable(typeof(UniGetUI.Extensions.CustomChannels.Update.BackupManifest))]
 [JsonSerializable(typeof(UniGetUI.Extensions.CustomChannels.Update.VersionRecord))]
+[JsonSerializable(typeof(UniGetUI.Extensions.CustomChannels.Packages.InstalledFileRecord))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 public sealed partial class AppJsonContext : JsonSerializerContext;

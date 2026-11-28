@@ -116,11 +116,10 @@ public sealed class UpdateOrchestrator(
             // 4. 包类型识别
             var detected = PackageDetector.Detect(downloadResult.Path);
             var configured = target.Install.Kind;
-            if (detected != configured)
+            var mismatch = PackageDetector.Validate(configured, detected, Path.GetFileName(downloadResult.Path));
+            if (mismatch is not null)
             {
-                var hint = PackageDetector.Validate(configured, detected) ??
-                           $"配置的安装方式（{configured}）与实际包类型（{detected}）不一致。";
-                throw new InvalidDataException(hint);
+                throw new InvalidDataException(mismatch);
             }
 
             // 5. 安装
@@ -221,12 +220,12 @@ public sealed class UpdateOrchestrator(
 
     private void EnsureTargetProcessStopped(TargetConfig target)
     {
-        if (string.IsNullOrWhiteSpace(target.Install.ExePath))
+        var processName = ResolveProcessName(target);
+        if (processName is null)
         {
             return;
         }
 
-        var processName = Path.GetFileNameWithoutExtension(target.Install.ExePath);
         var processes = Process.GetProcessesByName(processName);
         if (processes.Length == 0)
         {
@@ -273,15 +272,10 @@ public sealed class UpdateOrchestrator(
 
     private void TryLaunch(TargetConfig target)
     {
-        if (string.IsNullOrWhiteSpace(target.Install.ExePath))
+        var exePath = ExecutableLocator.Resolve(target);
+        if (exePath is null)
         {
-            return;
-        }
-
-        var exePath = Path.Combine(target.Install.RootPath, target.Install.ExePath);
-        if (!File.Exists(exePath))
-        {
-            logger.LogWarning("未找到启动目标：{Path}", exePath);
+            logger.LogWarning("未找到启动目标：{Root}", target.Install.RootPath);
             return;
         }
 
@@ -290,13 +284,25 @@ public sealed class UpdateOrchestrator(
             Process.Start(new ProcessStartInfo(exePath)
             {
                 UseShellExecute = true,
-                WorkingDirectory = target.Install.RootPath,
+                WorkingDirectory = Path.GetDirectoryName(exePath) ?? target.Install.RootPath,
             });
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             logger.LogWarning("启动目标程序失败：{Message}", ex.Message);
         }
+    }
+
+    /// <summary>结束进程用的名称；单文件应用的文件名带版本号，需要用定位器解析。</summary>
+    private static string? ResolveProcessName(TargetConfig target)
+    {
+        if (!string.IsNullOrWhiteSpace(target.Install.ExePath))
+        {
+            return Path.GetFileNameWithoutExtension(target.Install.ExePath);
+        }
+
+        var exePath = ExecutableLocator.Resolve(target);
+        return exePath is null ? null : Path.GetFileNameWithoutExtension(exePath);
     }
 
     private static string PlatformOf(IUpdateSource source) => source.Type switch

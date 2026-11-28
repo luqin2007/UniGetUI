@@ -19,14 +19,7 @@ internal sealed partial class CustomChannelCardViewModel : ObservableObject
 
     public string DisplayName => string.IsNullOrWhiteSpace(Target.DisplayName) ? Target.Id : Target.DisplayName;
 
-    public string InstallKindText => Target.Install.Kind switch
-    {
-        InstallKind.ZipOverwrite => "ZIP 解压覆盖",
-        InstallKind.SingleFile => "单文件替换",
-        InstallKind.Msi => "MSI 安装",
-        InstallKind.Exe => "EXE 安装",
-        _ => Target.Install.Kind.ToString(),
-    };
+    public string InstallKindText => InstallKinds.Label(Target.Install.Kind);
 
     public string SourceBadges => string.Join(
         " · ",

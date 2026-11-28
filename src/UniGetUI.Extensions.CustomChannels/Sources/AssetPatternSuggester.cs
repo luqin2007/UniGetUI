@@ -23,15 +23,16 @@ public static partial class AssetPatternSuggester
             return string.Empty;
         }
 
-        var extension = kind switch
+        var extensions = kind switch
         {
-            InstallKind.Msi => ".msi",
-            InstallKind.Exe => ".exe",
-            _ => ".zip",
+            // Msi/Exe 安装程序：优先 msi，其次 exe 安装包
+            InstallKind.Msi => new[] { ".msi", ".msix", ".exe" },
+            InstallKind.Exe or InstallKind.SingleFile => [".exe"],
+            _ => [".zip", ".7z", ".rar", ".tar", ".gz", ".tgz"],
         };
 
         var matching = assetNames
-            .Where(name => name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            .Where(name => extensions.Any(ext => name.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
             .ToList();
 
         if (matching.Count == 0)

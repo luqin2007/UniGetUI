@@ -25,6 +25,7 @@ public sealed class CustomChannelsService : IDisposable
     private readonly GitTokenStore _gitTokens;
     private readonly TransferManager _transfers;
     private readonly VersionRecordStore _versionRecords;
+    private readonly InstalledFileStore _installedFiles;
     private readonly VersionCache _cache = new();
     private readonly ReadmeStore _readmeStore;
 
@@ -53,6 +54,7 @@ public sealed class CustomChannelsService : IDisposable
         _gitTokens = new GitTokenStore(_secrets);
         _transfers = new TransferManager(paths, Config.Transfer, loggerFactory.CreateLogger<TransferManager>());
         _versionRecords = new VersionRecordStore(paths, loggerFactory.CreateLogger<VersionRecordStore>());
+        _installedFiles = new InstalledFileStore(paths, loggerFactory.CreateLogger<InstalledFileStore>());
         _readmeStore = new ReadmeStore(paths);
 
         _http = UpdaterHttp.Create(Config.Download);
@@ -141,7 +143,8 @@ public sealed class CustomChannelsService : IDisposable
         var backup = new BackupManager(Paths, _loggerFactory.CreateLogger<BackupManager>());
         var installers = new PackageInstallerFactory(
             new ArchiveExtractor(),
-            new ElevationClient(Paths, _loggerFactory.CreateLogger<ElevationClient>()));
+            new ElevationClient(Paths, _loggerFactory.CreateLogger<ElevationClient>()),
+            _installedFiles);
 
         var orchestrator = new UpdateOrchestrator(
             Paths,

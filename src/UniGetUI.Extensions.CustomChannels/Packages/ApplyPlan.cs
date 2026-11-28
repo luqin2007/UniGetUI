@@ -33,6 +33,9 @@ public sealed class ApplyStep
     public string? Arguments { get; set; }
 
     public bool PreserveExistingExtraFiles { get; set; } = true;
+
+    /// <summary>可选步骤：失败时不终止整个计划（例如清理上一版遗留文件）。</summary>
+    public bool Optional { get; set; }
 }
 
 public sealed class ApplyStatusDocument

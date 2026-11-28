@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using UniGetUI.Extensions.CustomChannels.Configuration;
+using UniGetUI.Extensions.CustomChannels.Packages;
 using Microsoft.Extensions.Logging;
 
 namespace UniGetUI.Extensions.CustomChannels.Update;
@@ -132,14 +133,25 @@ public sealed partial class VersionResolver(
     {
         var config = target.Version;
         var relative = config.Path ?? target.Install.ExePath;
+
+        string path;
         if (string.IsNullOrWhiteSpace(relative))
         {
-            logger.LogWarning("目标 {Target} 未配置版本文件路径，无法读取本地版本。", target.Id);
-            return null;
-        }
+            // 单文件应用的文件名带版本号，无法写死，自动在安装目录中定位
+            var resolved = ExecutableLocator.Resolve(target);
+            if (resolved is null)
+            {
+                logger.LogWarning("目标 {Target} 未配置版本文件路径，安装目录下也未找到可执行文件。", target.Id);
+                return null;
+            }
 
-        var root = target.Install.RootPath;
-        var path = Path.IsPathFullyQualified(relative) ? relative : Path.Combine(root, relative);
+            path = resolved;
+        }
+        else
+        {
+            var root = target.Install.RootPath;
+            path = Path.IsPathFullyQualified(relative) ? relative : Path.Combine(root, relative);
+        }
 
         try
         {
